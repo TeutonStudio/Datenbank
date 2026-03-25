@@ -44,6 +44,7 @@ class HauptFenster(QMainWindow):
         self.title_frame.setObjectName("title_frame")
         self.horizontalLayout = QtWidgets.QHBoxLayout(self.title_frame)
         self.horizontalLayout.setObjectName("horizontalLayout")
+        self.horizontalLayout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.title_icon = QtWidgets.QLabel(parent=self.title_frame)
         self.title_icon.setObjectName("title_icon")
         self.horizontalLayout.addWidget(self.title_icon)
@@ -53,6 +54,7 @@ class HauptFenster(QMainWindow):
         self.menu_btn = QtWidgets.QPushButton(parent=self.title_frame)
         self.menu_btn.setObjectName("menu_btn")
         self.horizontalLayout.addWidget(self.menu_btn)
+        self.horizontalLayout.addStretch()
         self.gridLayout.addWidget(self.title_frame, 0, 0, 1, 2)
 
         self.stackedWidget = QtWidgets.QStackedWidget(parent=self.central_widget)

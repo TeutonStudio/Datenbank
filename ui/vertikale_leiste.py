@@ -5,7 +5,8 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QListWidget, QListWidgetItem
 
 ICON_PATH = "./ui/icon/"
-STANDARD_ICON = "Logo.png"
+
+BREITE = { "nur_icon": 55, "mit_text": 200 }
 
 from typing import Callable
 
@@ -14,10 +15,8 @@ class VertikaleLeiste(QListWidget):
         super().__init__(parent)
         self.setObjectName("listWidget")
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.liste = liste
         self.nur_icon: Callable[[bool],list[None]]
-        self._breite_mit_text = 200
-        self._breite_nur_icon = 55
+        self.liste = liste
         self.aktualisiere()
         self.setze_darstellung(False)
 
@@ -27,12 +26,10 @@ class VertikaleLeiste(QListWidget):
 
         for text in self.liste:
             eintrag = VertikalerEintrag(text)
-            
+            self.addItem(eintrag)
             eintragsListe.append(
                 lambda nur_icon, e=eintrag: e.zeige_icon() if nur_icon else e.zeige_texticon()
             )
-            
-            self.addItem(eintrag)
 
         self.nur_icon = lambda schalter: [eintrag(schalter) for eintrag in eintragsListe]
 
@@ -42,16 +39,10 @@ class VertikaleLeiste(QListWidget):
 
     def setze_darstellung(self, nur_icon: bool):
         #self._nur_icon = nur_icon
-        breite = self._breite_nur_icon if nur_icon else self._breite_mit_text
+        breite = BREITE["nur_icon" if nur_icon else "mit_text"]
         self.setMinimumWidth(breite)
         self.setMaximumWidth(breite)
         self.nur_icon(nur_icon)
-
-    def _ermittle_icon_name(self, text: str) -> str:
-        kandidat = f"{text.lower()}.svg"
-        if os.path.exists(os.path.join(ICON_PATH, kandidat)):
-            return kandidat
-        return STANDARD_ICON
 
 
 class VertikalerEintrag(QListWidgetItem):

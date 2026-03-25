@@ -1,0 +1,2 @@
+# TODO Auswahl welche podman container genutzt werden sollen (liste mit bool feld) und icon für aktiv, inaktiv, nicht installiert
+# TODO seperate Button für container starten, stoppen, neustarten, löschen

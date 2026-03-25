@@ -1,0 +1,1 @@
+# TODO information über podman container anzeigen (name, status, port, image, logs)
