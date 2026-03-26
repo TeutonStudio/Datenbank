@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import QSplitter, QVBoxLayout, QWidget
 
+from compose.podman import lade_dienst_variablen
 from ui.verwaltung.ausgabe import AusgabeBereich
 from ui.verwaltung.container import ContainerBereich, DienstDefinition
+from ui.verwaltung.einstellungen_dialog import EinstellungenDialog
 from ui.verwaltung.volumen import VolumenBereich
 
 DIENSTE = [
@@ -27,6 +30,9 @@ DIENSTE = [
 class VerwaltungFenster(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        self._env_pfad = Path(__file__).resolve().parent.parent / ".env"
+        self._env_cache_pfad = self._env_pfad.with_suffix(".draft.json")
+        self._dienst_variablen = lade_dienst_variablen()
         self._container_status: dict[str, dict[str, object]] = {}
         self._ausgewaehlter_container: str | None = None
         self._ausgewaehlter_dienst = "Kein Dienst ausgewählt"
@@ -55,6 +61,7 @@ class VerwaltungFenster(QWidget):
         self.container_bereich.container_gewaehlt.connect(self._setze_ausgewaehlten_container)
         self.container_bereich.dienste_schalten.connect(self._schalte_dienste)
         self.container_bereich.aktualisieren_angefragt.connect(self.aktualisiere_inhalt)
+        self.container_bereich.einstellungen_angefragt.connect(self._oeffne_einstellungen)
         self.volumen_bereich.aktualisieren_angefragt.connect(self._aktualisiere_volumen)
         self.ausgabe_bereich.aktualisieren_angefragt.connect(self._aktualisiere_logs)
 
@@ -64,6 +71,20 @@ class VerwaltungFenster(QWidget):
         self.aktualisierungs_timer.start()
 
         self.aktualisiere_inhalt()
+
+    def _oeffne_einstellungen(self) -> None:
+        dialog = EinstellungenDialog(
+            self._env_pfad,
+            self._env_cache_pfad,
+            self.container_bereich.ausgewaehlte_dienst_ids(),
+            {dienst.dienst_id: dienst.titel for dienst in DIENSTE},
+            self._dienst_variablen,
+            self,
+        )
+        if dialog.exec():
+            self.ausgabe_bereich.setze_ausgabe(
+                f"Einstellungen gespeichert: {self._env_pfad.name}"
+            )
 
     def aktualisiere_inhalt(self) -> None:
         self._aktualisiere_container()

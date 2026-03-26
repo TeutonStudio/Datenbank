@@ -30,6 +30,7 @@ class ContainerBereich(QGroupBox):
     container_gewaehlt = pyqtSignal(object, str)
     dienste_schalten = pyqtSignal(str, list)
     aktualisieren_angefragt = pyqtSignal()
+    einstellungen_angefragt = pyqtSignal()
 
     def __init__(self, dienste: list[DienstDefinition], parent: QWidget | None = None):
         super().__init__("Container", parent)
@@ -42,6 +43,10 @@ class ContainerBereich(QGroupBox):
 
         layout = QVBoxLayout(self)
         kopfzeile = QHBoxLayout()
+        self.einstellungen_button = QPushButton("Einstellungen", self)
+        self.einstellungen_button.clicked.connect(
+            lambda: self.einstellungen_angefragt.emit()
+        )
         self.aktualisieren_button = QPushButton("Aktualisieren", self)
         self.aktualisieren_button.clicked.connect(self.aktualisieren_angefragt.emit)
         self.start_button = QPushButton("Start", self)
@@ -52,6 +57,7 @@ class ContainerBereich(QGroupBox):
         self.neustart_button.clicked.connect(
             partial(self._sende_kollektivaktion, "restart")
         )
+        kopfzeile.addWidget(self.einstellungen_button)
         kopfzeile.addStretch()
         kopfzeile.addWidget(self.aktualisieren_button)
         kopfzeile.addWidget(self.start_button)
@@ -112,6 +118,13 @@ class ContainerBereich(QGroupBox):
         dienste = self._dienste_fuer_befehl(befehl)
         if dienste:
             self.dienste_schalten.emit(befehl, dienste)
+
+    def ausgewaehlte_dienst_ids(self) -> list[str]:
+        return [
+            dienst.dienst_id
+            for dienst in self._dienste
+            if self._auswahl.get(dienst.dienst_id, False)
+        ]
 
     def _zeile_fuer_dienst(self, dienst_id: str) -> int:
         for zeile in range(self.tabelle.rowCount()):
