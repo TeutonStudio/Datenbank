@@ -8,20 +8,13 @@ import time
 import re
 from PyQt6.QtWidgets import QApplication
 from ui.haupt_fenster import HauptFenster
-
-def requirement():
-    list = [
-        "PyQt6",
-        "PyQt6-WebEngine",
-    ]
-    for r in list: subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", r])
+class Anwendung(QApplication):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        with open("style.qss") as f: self.setStyleSheet(f.read())
+        self.fenster = HauptFenster()
+        self.fenster.show()
 
 if __name__ == "__main__":
-    requirement()
-    app = QApplication(sys.argv)
-    # Load style file
-    with open("style.qss") as f: style_str = f.read()
-    app.setStyleSheet(style_str)
-    win = HauptFenster()
-    win.show()
+    app = Anwendung(sys.argv)
     sys.exit(app.exec())

@@ -1,0 +1,254 @@
+from __future__ import annotations
+
+import json
+import subprocess
+from typing import Any
+
+from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtWidgets import QSplitter, QVBoxLayout, QWidget
+
+from ui.verwaltung.ausgabe import AusgabeBereich
+from ui.verwaltung.container import ContainerBereich, DienstDefinition
+from ui.verwaltung.volumen import VolumenBereich
+
+DIENSTE = [
+    DienstDefinition("n8n", "N8N", ("n8n",), pflichtdienst=True),
+    DienstDefinition("open-webui", "Open WebUI", ("open-webui",)),
+    DienstDefinition("flowise", "Flowise", ("flowise",)),
+    DienstDefinition("langfuse", "Langfuse", ("langfuse-web",)),
+    DienstDefinition("neo4j", "Neo4j", ("neo4j",)),
+    DienstDefinition("minio", "MinIO", ("minio",)),
+    DienstDefinition("searxng", "SearXNG", ("searxng",)),
+    DienstDefinition("supabase", "Supabase Studio", ("studio", "supabase-studio")),
+    DienstDefinition("ollama", "Ollama", ("ollama", "ollama-cpu", "ollama-gpu", "ollama-gpu-amd")),
+]
+
+
+class VerwaltungFenster(QWidget):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._container_status: dict[str, dict[str, object]] = {}
+        self._ausgewaehlter_container: str | None = None
+        self._ausgewaehlter_dienst = "Kein Dienst ausgewählt"
+        self._letzter_status_fehler = ""
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+
+        self.container_bereich = ContainerBereich(DIENSTE, self)
+        self.volumen_bereich = VolumenBereich(self)
+        self.ausgabe_bereich = AusgabeBereich(self)
+
+        unterer_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        unterer_splitter.addWidget(self.volumen_bereich)
+        unterer_splitter.addWidget(self.ausgabe_bereich)
+        unterer_splitter.setStretchFactor(0, 1)
+        unterer_splitter.setStretchFactor(1, 2)
+
+        haupt_splitter = QSplitter(Qt.Orientation.Vertical, self)
+        haupt_splitter.addWidget(self.container_bereich)
+        haupt_splitter.addWidget(unterer_splitter)
+        haupt_splitter.setStretchFactor(0, 1)
+        haupt_splitter.setStretchFactor(1, 2)
+        layout.addWidget(haupt_splitter)
+
+        self.container_bereich.container_gewaehlt.connect(self._setze_ausgewaehlten_container)
+        self.container_bereich.dienste_schalten.connect(self._schalte_dienste)
+        self.container_bereich.aktualisieren_angefragt.connect(self.aktualisiere_inhalt)
+        self.volumen_bereich.aktualisieren_angefragt.connect(self._aktualisiere_volumen)
+        self.ausgabe_bereich.aktualisieren_angefragt.connect(self._aktualisiere_logs)
+
+        self.aktualisierungs_timer = QTimer(self)
+        self.aktualisierungs_timer.setInterval(5000)
+        self.aktualisierungs_timer.timeout.connect(self.aktualisiere_inhalt)
+        self.aktualisierungs_timer.start()
+
+        self.aktualisiere_inhalt()
+
+    def aktualisiere_inhalt(self) -> None:
+        self._aktualisiere_container()
+        self._aktualisiere_volumen()
+        self._aktualisiere_logs()
+
+    def _aktualisiere_container(self) -> None:
+        container_rohdaten, fehler = self._lade_json_liste(["ps", "-a"])
+        self._letzter_status_fehler = fehler
+        self._container_status = self._status_nach_dienst(container_rohdaten)
+        self.container_bereich.setze_status(self._container_status, fehler)
+
+    def _aktualisiere_volumen(self) -> None:
+        volumen_rohdaten, fehler = self._lade_json_liste(["volume", "ls"])
+        volumen_liste = []
+        for volumen in volumen_rohdaten:
+            volumen_liste.append(
+                {
+                    "name": str(volumen.get("Name") or ""),
+                    "driver": str(volumen.get("Driver") or ""),
+                    "mountpoint": str(volumen.get("Mountpoint") or ""),
+                }
+            )
+        self.volumen_bereich.setze_volumen(volumen_liste, fehler)
+
+    def _aktualisiere_logs(self) -> None:
+        self.ausgabe_bereich.setze_ausgewaehlten_container(
+            self._ausgewaehlter_container,
+            self._ausgewaehlter_dienst,
+        )
+
+        if not self._ausgewaehlter_container:
+            text = self._letzter_status_fehler or (
+                "Für den ausgewählten Dienst wurde noch kein Podman-Container gefunden."
+            )
+            self.ausgabe_bereich.setze_ausgabe(text)
+            return
+
+        ausgabe, fehler = self._fuehre_podman_kommando(
+            ["logs", "--tail", "200", self._ausgewaehlter_container]
+        )
+        if fehler:
+            self.ausgabe_bereich.setze_ausgabe(fehler)
+            return
+        self.ausgabe_bereich.setze_ausgabe(ausgabe or "Keine Log-Ausgabe vorhanden.")
+
+    def _setze_ausgewaehlten_container(
+        self,
+        container_name: str | None,
+        dienst_titel: str,
+    ) -> None:
+        self._ausgewaehlter_container = container_name
+        self._ausgewaehlter_dienst = dienst_titel
+        self._aktualisiere_logs()
+
+    def _schalte_dienste(self, befehl: str, dienst_ids: list[str]) -> None:
+        if not dienst_ids:
+            self.ausgabe_bereich.setze_ausgabe(
+                "Keine passenden Dienste für diese Kollektiv-Aktion ausgewählt."
+            )
+            return
+
+        bearbeitet: list[str] = []
+        fehler_liste: list[str] = []
+        for dienst_id in dienst_ids:
+            status = self._container_status.get(dienst_id, {})
+            container_name = str(status.get("container_name") or "")
+            if not container_name:
+                continue
+
+            _, fehler = self._fuehre_podman_kommando([befehl, container_name])
+            if fehler:
+                fehler_liste.append(f"{container_name}: {fehler}")
+                continue
+            bearbeitet.append(container_name)
+
+        self.aktualisiere_inhalt()
+
+        if fehler_liste:
+            self.ausgabe_bereich.setze_ausgabe("\n\n".join(fehler_liste))
+            return
+
+        if bearbeitet:
+            self.ausgabe_bereich.setze_ausgabe(
+                f"{befehl}: {', '.join(bearbeitet)}"
+            )
+
+    def _status_nach_dienst(
+        self,
+        container_rohdaten: list[dict[str, Any]],
+    ) -> dict[str, dict[str, object]]:
+        container_index: dict[str, dict[str, Any]] = {}
+        for container in container_rohdaten:
+            for name in self._container_namen(container):
+                container_index[name.lower()] = container
+
+        status_nach_dienst: dict[str, dict[str, object]] = {}
+        for dienst in DIENSTE:
+            container = self._finde_container_fuer_dienst(dienst, container_index)
+            status_nach_dienst[dienst.dienst_id] = self._formatierter_status(container)
+        return status_nach_dienst
+
+    def _finde_container_fuer_dienst(
+        self,
+        dienst: DienstDefinition,
+        container_index: dict[str, dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        for kandidat in dienst.container_namen:
+            kandidat_lower = kandidat.lower()
+            if kandidat_lower in container_index:
+                return container_index[kandidat_lower]
+
+            for container_name, container in container_index.items():
+                if container_name.startswith(f"{kandidat_lower}-"):
+                    return container
+
+        return None
+
+    def _formatierter_status(self, container: dict[str, Any] | None) -> dict[str, object]:
+        if not container:
+            return {
+                "container_name": None,
+                "laeuft": False,
+                "anzeige_status": "Nicht gefunden",
+            }
+
+        state = str(container.get("State") or "").lower()
+        status = str(container.get("Status") or container.get("State") or "Unbekannt")
+        return {
+            "container_name": self._container_namen(container)[0] if self._container_namen(container) else None,
+            "laeuft": state == "running" or status.lower().startswith("up"),
+            "anzeige_status": status,
+        }
+
+    def _container_namen(self, container: dict[str, Any]) -> list[str]:
+        namen = container.get("Names") or container.get("Name") or []
+        if isinstance(namen, str):
+            return [namen]
+        if isinstance(namen, list):
+            return [str(name) for name in namen if name]
+        return []
+
+    def _lade_json_liste(self, basis_befehl: list[str]) -> tuple[list[dict[str, Any]], str]:
+        daten, fehler = self._fuehre_podman_kommando([*basis_befehl, "--format", "json"])
+        if daten:
+            try:
+                geparst = json.loads(daten)
+                if isinstance(geparst, list):
+                    return geparst, ""
+                if isinstance(geparst, dict):
+                    return [geparst], ""
+            except json.JSONDecodeError:
+                pass
+
+        daten, fehler = self._fuehre_podman_kommando([*basis_befehl, "--format", "{{json .}}"])
+        if not daten:
+            return [], fehler
+
+        zeilen = []
+        for zeile in daten.splitlines():
+            zeile = zeile.strip()
+            if not zeile:
+                continue
+            try:
+                zeilen.append(json.loads(zeile))
+            except json.JSONDecodeError:
+                continue
+        return zeilen, fehler if not zeilen else ""
+
+    def _fuehre_podman_kommando(self, argumente: list[str]) -> tuple[str, str]:
+        try:
+            ergebnis = subprocess.run(
+                ["podman", *argumente],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+        except FileNotFoundError:
+            return "", "Podman wurde nicht gefunden. Installation und Runtime folgen im nächsten Schritt."
+        except subprocess.TimeoutExpired:
+            return "", "Die Podman-Abfrage hat das Zeitlimit überschritten."
+
+        stdout = ergebnis.stdout.strip()
+        stderr = ergebnis.stderr.strip()
+        if ergebnis.returncode != 0:
+            return "", stderr or stdout or "Die Podman-Abfrage ist fehlgeschlagen."
+        return stdout, ""

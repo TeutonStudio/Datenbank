@@ -1,37 +1,410 @@
-**Analyse**
-- Der Ordner heißt im Projekt aktuell `legacy`, nicht `Legacy`. Die neue UI ist noch ein Gerüst: statische Sidebar mit zwei Einträgen und leerem `QStackedWidget` in [ui/haupt_fenster.py](/home/alex/Programme/Container/N8nAnwendung/ui/haupt_fenster.py#L29), dazu ist die Containerauswahl nur als TODO angelegt in [ui/verwaltung/container.py](/home/alex/Programme/Container/N8nAnwendung/ui/verwaltung/container.py#L1).
-- Die aktuelle Sidebar arbeitet nur mit Textlisten; für dynamische Addon-Einträge reicht das nicht. Außerdem ist der Icon-Pfad aktuell falsch aufgebaut in [ui/vertikale_leiste.py](/home/alex/Programme/Container/N8nAnwendung/ui/vertikale_leiste.py#L48).
-- Die Legacy-Startlogik ist stark auf Docker fest verdrahtet: `docker compose`, `docker ps`, `docker exec`, `docker inspect`, `docker rm` in [legacy/start_services.py](/home/alex/Programme/Container/N8nAnwendung/legacy/start_services.py#L54) und [legacy/LocalAI.py](/home/alex/Programme/Container/N8nAnwendung/legacy/LocalAI.py#L116).
-- Für die Neuentwicklung sind aus `legacy/LocalAI.py` aber mehrere Bausteine wiederverwendbar: Compose-Erkennung und Service-Parsing [legacy/LocalAI.py](/home/alex/Programme/Container/N8nAnwendung/legacy/LocalAI.py#L116), eingebetteter Browser mit Login-Handling [legacy/LocalAI.py](/home/alex/Programme/Container/N8nAnwendung/legacy/LocalAI.py#L304), UI-URL-Ableitung [legacy/LocalAI.py](/home/alex/Programme/Container/N8nAnwendung/legacy/LocalAI.py#L727), Status-/Port-Polling [legacy/LocalAI.py](/home/alex/Programme/Container/N8nAnwendung/legacy/LocalAI.py#L955).
-- Aus den privaten Port-Freigaben ergeben sich als klare Web-Kandidaten: `n8n`, `flowise`, `open-webui`, `neo4j`, `langfuse-web`, `minio`-Console, `searxng`; `graphiti` ist eher API/SSE als echte Weboberfläche [legacy/docker-compose.override.private.yml](/home/alex/Programme/Container/N8nAnwendung/legacy/docker-compose.override.private.yml#L1), [legacy/docker-compose.override.graphiti.yml](/home/alex/Programme/Container/N8nAnwendung/legacy/docker-compose.override.graphiti.yml#L24).
-- Supabase ist ein Sonderfall: die Legacy-Logik klont die Compose-Dateien erst zur Laufzeit [legacy/start_services.py](/home/alex/Programme/Container/N8nAnwendung/legacy/start_services.py#L25). Im aktuellen Repo existiert `supabase/` nicht.
+# Plan Neuer N8N-Verwalter
 
-**Umsetzungsplan**
-1. Eine Runtime-Abstraktion einführen, z.B. `ContainerRuntime`, damit die neue Verwaltung nirgends mehr direkt `docker ...` aufruft, sondern nur noch `runtime.compose_up`, `compose_down`, `compose_ps`, `logs`, `inspect`, `remove`. Primärziel ist Podman; Docker bleibt höchstens als Fallback.
-2. Eine Start-/Voraussetzungsprüfung bauen, die `podman`, den Compose-Frontend-Befehl, `git` und ggf. `openssl` prüft. Bei fehlendem Podman soll die Verwaltung nicht abstürzen, sondern den Status `nicht installiert` zeigen und Installationshinweise ausgeben statt blind zu installieren.
-3. Einen zentralen Service-Katalog definieren statt URLs aus Tabellenzellen abzuleiten. Pro Dienst: `id`, Anzeigename, Kategorie (`core`/`addon`), Podman-Compose-Service-Name, Standard-Auswahl, Web-URL-Regel, Auth-Hinweis, Profilbindung (`cpu/gpu`), optionales Icon.
-4. Die Containerauswahl in [ui/verwaltung/container.py](/home/alex/Programme/Container/N8nAnwendung/ui/verwaltung/container.py#L1) als echte Verwaltungsseite umsetzen: Liste/Tabelle mit Checkbox, Statussymbolen (`aktiv`, `inaktiv`, `nicht installiert`), plus Aktionen `Start`, `Stop`, `Neustart`, `Löschen`.
-5. Die Auswahl persistent speichern, z.B. in einer JSON-Datei unterhalb des Projekts. Diese Auswahl steuert sowohl die Compose-Starts als auch die dynamischen Sidebar-Einträge.
-6. Die Sidebar von einer simplen `list[str]` auf strukturierte Navigation umbauen: feste Einträge wie `Verwaltung` plus dynamisch erzeugte Addon-Einträge. Jedes Sidebar-Item braucht mindestens `id`, `label`, `icon`, `page_factory`.
-7. Das zentrale `QStackedWidget` in [ui/haupt_fenster.py](/home/alex/Programme/Container/N8nAnwendung/ui/haupt_fenster.py#L60) nicht mehr jedes Mal neu aufbauen, sondern Seiten cachen. Für jeden Web-Zusatz wird genau ein `QWebEngineView` erzeugt und danach nur noch ein-/ausgeblendet.
-8. Damit Logins beim Umschalten erhalten bleiben, die Web-Seiten persistent halten: pro Addon eine feste `QWebEngineView`-Instanz, optional alle mit gemeinsamem `QWebEngineProfile`. Solange die Widgets nicht zerstört werden, bleibt die Session im laufenden Programm erhalten.
-9. Die dynamischen Sidebar-Einträge aus zwei Signalen ableiten: `ausgewählt` und `webfähig`. Optional zusätzlich `laufend/erreichbar`, falls du Einträge nur bei tatsächlich laufender UI sehen willst.
-10. Die Legacy-Statuslogik übernehmen, aber an die neue Runtime koppeln: Compose-Konfiguration lesen, laufende Container per `ps` abgleichen, Ports auflösen, HTTP-Erreichbarkeit mit Hysterese prüfen. Das ist die Grundlage für Statusfarben, Aktiv-Symbole und die Entscheidung, ob ein Web-Eintrag klickbar ist.
-11. Die Legacy-Startsequenz funktional migrieren: Supabase-Vorbereitung, `.env`-Sync, SearXNG-First-Run-Anpassung und optional Graphiti bleiben eigene Orchestrierungsschritte, aber nicht mehr in einem Docker-spezifischen Skript.
-12. `einstieg.py` sollte die Python-Paketprüfung von der Containerprüfung trennen. PyQt kann weiter geprüft werden, Podman aber nur melden oder per expliziter Benutzeraktion installieren lassen.
+## Zielbild
 
-**Rückfragen**
-- Soll ein Web-Addon in der Sidebar erscheinen, sobald es ausgewählt ist, oder erst wenn der Container wirklich läuft?
-- Welche Dienste sollen initial als Web-Zusätze gelten: nur `n8n`, `Open WebUI`, `Flowise`, `Langfuse`, `Neo4j`, `MinIO`, `SearXNG`, `Supabase Studio`?
-- Soll `Supabase` weiterhin Teil des Systems sein, obwohl die Compose-Dateien aktuell erst per Git-Clone geholt werden?
-- Wenn `Supabase` bleiben soll: lieber weiter zur Laufzeit klonen oder die benötigten Compose-Dateien direkt ins Projekt übernehmen?
-- Soll ausschließlich `podman` unterstützt werden, oder soll die Runtime zusätzlich `podman compose` und `podman-compose` automatisch erkennen?
-- Möchtest du bei fehlendem Podman nur einen Hinweis anzeigen oder aus der UI heraus eine Installation anstoßen?
-- Welche Zielplattformen willst du unterstützen: nur Linux/Fedora, oder auch andere Distributionen?
-- Soll die Login-Session nur beim Umschalten innerhalb einer App-Sitzung erhalten bleiben, oder auch nach einem kompletten Neustart der Anwendung?
-- Welche Container sind Pflichtbestandteil des Stacks und dürfen nicht abwählbar sein?
-- Sollen CPU/GPU-Profile für Ollama aus der Legacy-Version erhalten bleiben?
-- Soll `Graphiti` überhaupt im neuen Verwalter auftauchen, obwohl es eher eine API als eine Benutzeroberfläche ist?
-- Wie soll die Containerauswahl fachlich arbeiten: Auswahl einzelner Dienste oder Auswahl vordefinierter Pakete/Presets?
+Die Anwendung bleibt eine klassische Qt-Oberfläche mit drei festen Bereichen:
 
-Wenn du die Rückfragen beantwortest, kann ich daraus direkt einen umsetzbaren Architekturplan mit Modulzuschnitt und Datenmodell für den neuen Verwalter ableiten.
+- `HorizontaleLeiste`: nur Kopfzeile mit Logo, Titel und Button zum Ein-/Ausklappen der linken Navigation
+- `VertikaleLeiste`: vollständige Navigation der Anwendung
+- zentrales Widget: zeigt entweder den `Verwalter` oder die UI eines laufenden Dienstes
+
+Die `HorizontaleLeiste` enthält **keine Tabs** und **keine Seitenlogik**.
+Alle navigierbaren Einträge liegen ausschließlich in der `VertikaleLeiste`.
+
+## Gewünschtes Verhalten
+
+- Der Eintrag `Verwalter` ist immer vorhanden.
+- Im `Verwalter` werden Dienste ausgewählt, installiert, gestartet, gestoppt und neu gestartet.
+- Abhängig von den Einstellungen des Nutzers entstehen zusätzliche Einträge in der `VertikaleLeiste`.
+- Diese zusätzlichen Einträge werden nur angezeigt, wenn der jeweilige Dienst:
+  - aktiviert ist
+  - eine darstellbare UI besitzt
+  - aktuell läuft
+- Beim Klick auf einen solchen Eintrag wird im zentralen Bereich nicht mehr der `Verwalter`, sondern die passende Dienst-UI angezeigt.
+- Beim Wechsel zwischen Einträgen bleibt die Dienst-UI erhalten, damit keine erneute Anmeldung nötig ist.
+- Beim Beenden der Anwendung dürfen Sessions verworfen werden.
+
+## Fachliche Entscheidungen
+
+### Container-Runtime
+
+- Es wird ausschließlich `podman` unterstützt.
+- Docker und Docker Compose werden nicht weiter als Zielarchitektur betrachtet.
+- Die Anwendung prüft beim Start, ob `podman` vorhanden ist.
+- Falls `podman` fehlt, soll die Installation aus der UI heraus angestoßen werden.
+- Die eigentliche Nutzung der Anwendung soll möglichst universell sein.
+- Die Installationslogik muss trotzdem plattformspezifisch behandelt werden.
+
+### Dienste
+
+- `n8n` ist Pflichtbestandteil und darf nicht abgewählt werden.
+- Alle anderen Dienste sind optional.
+- Die Auswahl erfolgt pro Dienst, nicht über Presets.
+- CPU- und GPU-Varianten für Ollama bleiben erhalten und werden im `Verwalter` auswählbar gemacht.
+- `Graphiti` wird im neuen Verwalter nicht berücksichtigt.
+
+### Web- und Native-Seiten
+
+Folgende Dienste gelten initial als eigenständige Seiten in der linken Navigation:
+
+- `n8n`
+- `Open WebUI`
+- `Flowise`
+- `Langfuse`
+- `Neo4j`
+- `MinIO`
+- `SearXNG`
+- `Supabase Studio`
+- `Ollama`
+
+Für die meisten dieser Dienste wird im zentralen Bereich eine Weboberfläche angezeigt.
+`Ollama` ist ein Sonderfall: dort ist statt einer Web-UI eine native Qt-Seite vorgesehen, auf der Modelle angezeigt, gelöscht und neu gepullt werden können.
+
+## Technische Leitidee
+
+Die Anwendung bekommt eine zentrale Trennung zwischen:
+
+- UI-Navigation
+- Dienst-Konfiguration
+- Laufzeitstatus
+- Podman-Ausführung
+
+Die UI darf nicht direkt mit `podman`-Kommandos oder Compose-Dateien verdrahtet sein.
+Stattdessen arbeitet sie gegen klar getrennte Anwendungsobjekte.
+
+## Zielarchitektur
+
+### 1. Hauptfenster als Orchestrierung
+
+`ui/haupt_fenster.py` wird die zentrale Koordinationsschicht.
+
+Verantwortlichkeiten:
+
+- Initialisierung von Runtime, Einstellungen und Service-Katalog
+- Aufbau der festen Grundseiten
+- Verwaltung der dynamischen Navigation
+- Caching der Seiten im zentralen `QStackedWidget`
+- periodische Statusaktualisierung
+- Umschalten zwischen `Verwalter` und Dienstseiten
+
+Das Hauptfenster verwaltet mindestens:
+
+- `runtime`
+- `service_catalog`
+- `settings_store`
+- `status_controller`
+- `page_cache`
+- `navigation_items`
+
+### 2. HorizontaleLeiste
+
+`ui/horizontale_leiste.py` bleibt schlank.
+
+Verantwortlichkeiten:
+
+- Logo anzeigen
+- aktuellen Titel anzeigen
+- linke Navigation ein- und ausklappen
+
+Nicht enthalten:
+
+- Tabs
+- Seitenwechsel
+- Dienstlogik
+- Runtime-Logik
+
+### 3. VertikaleLeiste als echte Navigation
+
+`ui/vertikale_leiste.py` wird von einer simplen Textliste zu einer strukturierten Navigationsleiste umgebaut.
+
+Ein Navigationseintrag benötigt mindestens:
+
+- `id`
+- `titel`
+- `icon`
+- `seiten_typ`
+- `service_id` optional
+
+Beispielhafte Eintragstypen:
+
+- `verwalter`
+- `web_ui`
+- `native_ui`
+
+Die Leiste zeigt immer:
+
+- `Verwalter`
+
+Die Leiste zeigt zusätzlich dynamisch:
+
+- laufende aktivierte Dienste mit eigener Seite
+
+Der Seitenwechsel darf nicht mehr über reine Listenindizes mit direktem `setCurrentIndex` gekoppelt sein.
+Stattdessen muss über `nav_item.id` oder `page_id` auf gecachte Seiten gewechselt werden.
+
+### 4. Zentrales Widget mit gecachten Seiten
+
+Das zentrale `QStackedWidget` bleibt erhalten.
+Es wird aber nicht mehr als Wegwerf-Container verwendet.
+
+Stattdessen:
+
+- die `Verwalter`-Seite wird einmal erzeugt
+- jede Dienstseite wird bei erstem Zugriff erzeugt
+- danach wird sie im Cache gehalten
+- bei erneutem Wechsel wird dieselbe Instanz wieder angezeigt
+
+Vorteil:
+
+- offene Sessions bleiben beim Umschalten erhalten
+- Browserzustand bleibt erhalten
+- Seiten werden nicht unnötig neu geladen
+
+## Seitenmodell
+
+### Verwalter-Seite
+
+Der `Verwalter` ist eine feste Seite im zentralen Widget.
+Er bündelt die eigentliche Systemverwaltung.
+
+Inhalt:
+
+- Auswahl der aktivierten Dienste
+- Auswahl des Ollama-Profils `cpu`, `gpu-nvidia`, `gpu-amd`
+- Anzeige des Installationsstatus
+- Anzeige des Laufzeitstatus
+- Aktionen:
+  - Installieren
+  - Starten
+  - Stoppen
+  - Neustarten
+  - optional Löschen
+
+Die heute leeren Module können dafür genutzt werden:
+
+- `ui/verwaltung/container.py` für Dienstauswahl und Aktionen
+- `ui/verwaltung/ausgabe.py` für Prozess- und Podman-Ausgaben
+- `ui/verwaltung/volumen.py` für Details, Ports, Images, Volumes und Laufzeitinformationen
+
+Diese Module sollen keine separaten linken Navigationseinträge werden.
+Sie bilden gemeinsam die feste `Verwalter`-Seite.
+
+### Dienstseiten
+
+Für jeden aktivierten und laufenden Dienst mit UI wird eine eigene Seite bereitgestellt.
+
+Mögliche Varianten:
+
+- Web-Seite über `QWebEngineView`
+- native Qt-Seite für Spezialfälle wie `Ollama`
+
+`ui/web_ui.py` wird zur Grundlage der persistenten Dienstseiten.
+Die Klasse muss erweitert werden um:
+
+- lazy loading
+- optional gemeinsame `QWebEngineProfile`-Nutzung
+- saubere Wiederverwendung derselben Instanz
+- optional Auth-Handling
+
+## Service-Katalog
+
+Es wird ein zentraler Service-Katalog eingeführt.
+Nicht mehr aus Tabellenzellen oder Portstrings ableiten.
+
+Jeder Dienst erhält strukturierte Metadaten:
+
+- `id`
+- `titel`
+- `compose_service_name`
+- `pflichtdienst`
+- `standard_aktiv`
+- `hat_web_ui`
+- `seiten_typ`
+- `icon_path`
+- `url_builder`
+- `profile_abhaengig`
+- `installationsrelevant`
+
+Beispiel:
+
+- `n8n`: Pflichtdienst, Web-UI
+- `open-webui`: optional, Web-UI
+- `ollama`: optional, native Seite
+
+## Einstellungen
+
+Die Nutzerauswahl wird persistent gespeichert.
+
+Zu speichern sind mindestens:
+
+- aktivierte Dienste
+- Ollama-Profil
+- optionale zusätzliche Laufzeitparameter
+
+Diese Einstellungen beeinflussen:
+
+- welche Compose-Overrides gebaut werden
+- welche Dienste gestartet werden
+- welche Einträge in der linken Navigation grundsätzlich entstehen dürfen
+
+## Compose-Strategie
+
+Die Legacy-Idee mit einem großen Compose-Block wird aufgelöst.
+
+Geplant ist:
+
+- Grund-Compose für Pflichtbestandteile
+- einzelne dienstspezifische Override-Dateien
+- beim Start werden aus den gewählten Diensten die passenden Overrides zusammengestellt
+
+Dadurch wird die Konfiguration nutzerabhängig aufgebaut.
+
+Supabase bleibt Bestandteil des Systems, aber die benötigten Compose-Dateien sollen direkt ins Projekt übernommen werden.
+Der bisherige Git-Clone zur Laufzeit entfällt langfristig.
+
+## Podman-Abstraktion
+
+Es wird eine eigene Runtime-Schicht eingeführt, z.B. `PodmanRuntime`.
+
+Verantwortlichkeiten:
+
+- `podman` erkennen
+- Installation prüfen
+- `compose up`
+- `compose down`
+- Statusabfragen
+- Logs lesen
+- Container-Details lesen
+- Images und Volumes verwalten
+- Ollama-spezifische Kommandos ausführen
+
+Die UI spricht nur mit dieser Runtime und nicht direkt mit Shell-Kommandos.
+
+## Statuslogik
+
+Die alte Statuslogik aus `legacy/LocalAI.py` bleibt inhaltlich nützlich, wird aber auf Podman übertragen.
+
+Benötigte Informationen:
+
+- läuft der Dienst
+- welche Ports sind veröffentlicht
+- ist die UI erreichbar
+- welcher Eintrag darf in der Navigation erscheinen
+
+Die Sichtbarkeitsregel für linke Diensteinträge lautet:
+
+- Dienst ist aktiviert
+- Dienst läuft
+- Dienst hat eine darstellbare Seite
+
+Optional kann zusätzlich die Erreichbarkeit geprüft werden, um Web-Einträge erst dann klickbar zu machen, wenn die UI tatsächlich antwortet.
+
+## Datenfluss in der Anwendung
+
+### Beim Start der Anwendung
+
+1. Qt-Anwendung startet
+2. `HauptFenster` lädt Einstellungen
+3. `HauptFenster` initialisiert Runtime und Service-Katalog
+4. `Verwalter`-Seite wird aufgebaut
+5. `VertikaleLeiste` zeigt zunächst mindestens `Verwalter`
+6. Statusabfrage läuft an
+7. laufende aktivierte Dienste erzeugen zusätzliche linke Einträge
+
+### Beim Ändern der Einstellungen
+
+1. Nutzer aktiviert oder deaktiviert einen Dienst im `Verwalter`
+2. Einstellungen werden gespeichert
+3. laufende Navigation wird neu berechnet
+4. ein Dienst erscheint erst als zusätzlicher Navigationseintrag, wenn er auch wirklich läuft
+
+### Beim Starten von Diensten
+
+1. Nutzer klickt im `Verwalter` auf Starten
+2. Runtime baut die gewählten Compose-Dateien zusammen
+3. Podman startet die Dienste
+4. Statusabfrage erkennt laufende Dienste
+5. `VertikaleLeiste` ergänzt neue Einträge
+6. beim Anklicken wird die jeweilige Seite im zentralen Widget angezeigt
+
+## Einbau in die aktuelle UI
+
+### Hauptfenster
+
+Die aktuelle Struktur von `ui/haupt_fenster.py` ist als Basis geeignet, benötigt aber folgende Umbauten:
+
+- keine harte Verdrahtung von Listenindex auf `QStackedWidget`-Index
+- Einführung eines Seiten-Caches
+- Einführung strukturierter Navigation
+- feste `Verwalter`-Seite anlegen
+- dynamische Dienstseiten ergänzen
+- Titel der `HorizontaleLeiste` abhängig vom aktiven Seiteneintrag setzen
+
+### HorizontaleLeiste
+
+Die vorhandene Klasse kann fast unverändert bleiben.
+Sie braucht nur:
+
+- Toggle der linken Leiste
+- Anzeige des aktuellen Seitentitels
+
+### VertikaleLeiste
+
+Die vorhandene Klasse muss erweitert werden um:
+
+- strukturierte Daten statt nur `list[str]`
+- zuverlässige Icons pro Eintrag
+- Zugriff auf `page_id`
+- Neuaufbau der Liste ohne Verlust der aktiven Auswahl
+
+### WebUI
+
+`ui/web_ui.py` darf nicht nur stumpf `setUrl()` beim Erzeugen aufrufen.
+Die Seite braucht:
+
+- persistenten Zustand
+- definierte Dienst-ID
+- optional gemeinsames Browser-Profil
+- spätere Erweiterbarkeit für Auth und Reachability
+
+### Verwaltungsmodule
+
+Die Dateien unter `ui/verwaltung/` sind der richtige Platz für die feste Verwaltungsseite.
+
+Geplante Aufteilung:
+
+- `container.py`: Dienste, Auswahl, Installationsstatus, Start/Stop/Restart
+- `ausgabe.py`: globale Logs und Prozessausgaben
+- `volumen.py`: Details, Ports, Container, Volumes, Images
+
+## Empfohlene Umsetzungsreihenfolge
+
+1. `VertikaleLeiste` auf strukturierte Navigation umbauen
+2. `HauptFenster` auf `page_id`-basierte Navigation und Seiten-Cache umstellen
+3. feste `Verwalter`-Seite aufbauen
+4. `ui/web_ui.py` zu wiederverwendbaren Dienstseiten ausbauen
+5. Service-Katalog einführen
+6. Settings-Store einführen
+7. `PodmanRuntime` einführen
+8. Status-Polling und dynamische Navigation anbinden
+9. Compose-Override-Bau pro ausgewähltem Dienst umsetzen
+10. Podman-Installation aus der UI integrieren
+
+## Kritische Punkte
+
+- Die Nutzung kann plattformübergreifend sein, die automatische Installation von `podman` aber nicht.
+- Deshalb muss die Installationslogik getrennt von der normalen Runtime behandelt werden.
+- Die Navigation darf nicht indexbasiert bleiben, sonst brechen dynamische Einträge die Seitenzuordnung.
+- Seiten im zentralen Widget dürfen nicht bei jedem Wechsel neu erzeugt oder entfernt werden.
+- Supabase muss vor der eigentlichen Runtime-Migration aus der Git-Clone-Logik gelöst und ins Projekt integriert werden.
+
+## Ergebnis nach Umsetzung
+
+Nach der Umsetzung arbeitet die Oberfläche so:
+
+- links steht immer `Verwalter`
+- im `Verwalter` wählt der Nutzer Dienste und steuert Podman
+- laufende aktivierte Dienste erscheinen automatisch als zusätzliche Einträge links
+- ein Klick auf einen laufenden Dienst zeigt dessen UI im zentralen Bereich
+- beim Zurückwechseln bleibt die zuvor geöffnete Dienst-UI erhalten
+- die obere Leiste bleibt nur eine Kopfzeile und enthält keine Tabs

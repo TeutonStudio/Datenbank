@@ -1,0 +1,43 @@
+# N8N container override file
+
+volumes:
+  n8n_storage:
+
+x-n8n: &service-n8n
+  image: n8nio/n8n:latest
+  depends_on:
+    - db
+  environment:
+    - DB_TYPE=postgresdb
+    - DB_POSTGRESDB_HOST=db
+    - DB_POSTGRESDB_USER=${N8N_DB_POSTGRESDB_USER:-postgres}
+    - DB_POSTGRESDB_PASSWORD=${N8N_DB_POSTGRESDB_PASSWORD:-postgres}
+    - DB_POSTGRESDB_DATABASE=${N8N_DB_POSTGRESDB_DATABASE:-postgres}
+    - N8N_DIAGNOSTICS_ENABLED=false
+    - N8N_PERSONALIZATION_ENABLED=false
+    - N8N_ENCRYPTION_KEY
+    - N8N_USER_MANAGEMENT_JWT_SECRET
+    - N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true
+    - WEBHOOK_URL=${N8N_HOSTNAME:+https://}${N8N_HOSTNAME:-http://localhost:5678}
+
+services:
+  n8n-import:
+    <<: *service-n8n
+    container_name: n8n-import
+    entrypoint: /bin/sh
+    command:
+      - "-c"
+      - "if [ -d /backup/credentials ]; then n8n import:credentials --separate --input=/backup/credentials; fi && if [ -d /backup/workflows ]; then n8n import:workflow --separate --input=/backup/workflows; fi"
+    volumes:
+      - ../n8n/backup:/backup:Z
+
+  n8n:
+    <<: *service-n8n
+    container_name: n8n
+    restart: unless-stopped
+    expose:
+      - 5678/tcp
+    volumes:
+      - n8n_storage:/home/node/.n8n
+      - ../n8n/backup:/backup:Z
+      - ../shared:/data/shared:Z

@@ -1,0 +1,23 @@
+# Valkey instance used by Langfuse.
+
+volumes:
+  valkey_data:
+
+services:
+  redis:
+    image: docker.io/valkey/valkey:8-alpine
+    container_name: redis
+    command: valkey-server --save 30 1 --loglevel warning
+    restart: unless-stopped
+    expose:
+      - 6379/tcp
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 3s
+      timeout: 10s
+      retries: 10

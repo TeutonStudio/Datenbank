@@ -1,0 +1,5 @@
+# Placeholder for the future vendored Supabase stack.
+# The legacy setup pulled Supabase from an external repository at runtime.
+# This file is intentionally empty until those Compose files are checked in.
+
+services: {}

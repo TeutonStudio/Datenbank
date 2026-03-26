@@ -1,0 +1,21 @@
+# Neo4j graph database.
+
+services:
+  neo4j:
+    image: neo4j:latest
+    container_name: neo4j
+    restart: unless-stopped
+    expose:
+      - 7473/tcp
+      - 7474/tcp
+      - 7687/tcp
+    environment:
+      - NEO4J_AUTH=${NEO4J_AUTH:-neo4j/your_password}
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_dbms_security_procedures_allowlist=apoc.*
+    volumes:
+      - ../neo4j/logs:/logs:Z
+      - ../neo4j/config:/config:Z
+      - ../neo4j/data:/data:Z
+      - ../neo4j/plugins:/plugins:Z

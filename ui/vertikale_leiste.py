@@ -11,16 +11,15 @@ BREITE = { "nur_icon": 55, "mit_text": 200 }
 from typing import Callable
 
 class VertikaleLeiste(QListWidget):
-    def __init__(self, parent=None, liste: list[str] = []):
+    def __init__(self, parent=None, liste: list[str] | None = None):
         super().__init__(parent)
         self.setObjectName("listWidget")
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.nur_icon: Callable[[bool],list[None]]
-        self.liste: list[str]
-        
-        self.neue_liste(liste)
-        self.aktualisiere()
-        self.setze_darstellung(False)
+        self.nur_icon: Callable[[bool], list[None]] = lambda _schalter: []
+        self.liste: list[str] = []
+        self._nur_icon = False
+
+        self.neue_liste(liste or [])
 
     def aktualisiere(self):
         self.clear()
@@ -34,13 +33,14 @@ class VertikaleLeiste(QListWidget):
             )
 
         self.nur_icon = lambda schalter: [eintrag(schalter) for eintrag in eintragsListe]
+        self.setze_darstellung(self._nur_icon)
 
     def neue_liste(self, liste: list[str]):
         self.liste = liste
         self.aktualisiere()
 
     def setze_darstellung(self, nur_icon: bool):
-        #self._nur_icon = nur_icon
+        self._nur_icon = nur_icon
         breite = BREITE["nur_icon" if nur_icon else "mit_text"]
         self.setMinimumWidth(breite)
         self.setMaximumWidth(breite)
@@ -68,4 +68,3 @@ class VertikalerEintrag(QListWidgetItem):
     def zeige_icon(self):
         self.definiere_icon()
         self.setText(None)
-

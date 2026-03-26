@@ -57,6 +57,8 @@ class HorizontaleLeiste(QFrame):
         self.menu_btn.setIconSize(QSize(30, 30))
         self.menu_btn.setCheckable(True)
         self.menu_btn.setChecked(False)
+        
+        self.setze_titel("Abschnitt")
     
     def setze_titel(self, titel: str):
         self.title_label.setText(titel)
@@ -65,11 +67,6 @@ class HorizontaleLeiste(QFrame):
         pfad = "./ui/icon/" + ("open" if status else "close") + ".svg"
         self.menu_btn.setIcon(QIcon(pfad))
 
-#    def retranslateUi(self, _translate: Callable[[str,str],str]):
-#        self.title_icon.setText(_translate("MainWindow", "TextLabel"))
-#        self.title_label.setText(_translate("MainWindow", "TextLabel"))
-#        self.menu_btn.setText(_translate("MainWindow", "PushButton"))
-        
     def init_single_slot(self, side_menu, setCurrentIndex):
         self.menu_btn.toggled['bool'].connect(side_menu.setze_darstellung)
         self.menu_btn.toggled['bool'].connect(self.title_label.setHidden)

@@ -1,0 +1,15 @@
+# Qdrant vector store.
+
+volumes:
+  qdrant_storage:
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    expose:
+      - 6333/tcp
+      - 6334/tcp
+    volumes:
+      - qdrant_storage:/qdrant/storage

@@ -1,0 +1,71 @@
+# Ollama compose override file
+
+volumes:
+  ollama_storage:
+
+x-ollama: &service-ollama
+  container_name: ollama
+  restart: unless-stopped
+  expose:
+    - 11434/tcp
+  environment:
+    - OLLAMA_CONTEXT_LENGTH=8192
+    - OLLAMA_FLASH_ATTENTION=1
+    - OLLAMA_KV_CACHE_TYPE=q8_0
+    - OLLAMA_MAX_LOADED_MODELS=2    
+  volumes:
+    - ollama_storage:/root/.ollama
+
+x-init-ollama: &init-ollama
+  container_name: ollama-pull-llama
+  volumes:
+    - ollama_storage:/root/.ollama
+  entrypoint: /bin/sh
+  command:
+    - "-c"
+    - "sleep 3; OLLAMA_HOST=ollama:11434 ollama pull qwen2.5:7b-instruct-q4_K_M; OLLAMA_HOST=ollama:11434 ollama pull nomic-embed-text; OLLAMA_HOST=ollama:11434 ollama pull llama3.1:8b; OLLAMA_HOST=ollama:11434 ollama pull llama3.2" 
+    # For a larger context length verison of the model, run these commands:
+    # echo "FROM qwen2.5:7b-instruct-q4_K_M\n\nPARAMETER num_ctx 8096" > Modelfile
+    # ollama create qwen2.5:7b-8k -f ./Modelfile
+    # Change the name of the LLM and num_ctx as you see fit.
+
+services:
+  ollama-cpu:
+    profiles: ["cpu"]
+    <<: *service-ollama
+    image: ollama/ollama:latest
+
+  ollama-gpu:
+    profiles: ["gpu-nvidia"]
+    <<: *service-ollama
+    image: ollama/ollama:latest
+    gpus: all
+
+  ollama-gpu-amd:
+    profiles: ["gpu-amd"]
+    <<: *service-ollama
+    image: ollama/ollama:rocm
+    devices:
+      - "/dev/kfd"
+      - "/dev/dri"
+
+  ollama-pull-llama-cpu:
+    profiles: ["cpu"]
+    <<: *init-ollama
+    image: ollama/ollama:latest
+    depends_on:
+      - ollama-cpu
+
+  ollama-pull-llama-gpu:
+    profiles: ["gpu-nvidia"]
+    <<: *init-ollama
+    image: ollama/ollama:latest
+    depends_on:
+      - ollama-gpu
+
+  ollama-pull-llama-gpu-amd:
+    profiles: [gpu-amd]
+    <<: *init-ollama
+    image: ollama/ollama:rocm
+    depends_on:
+     - ollama-gpu-amd

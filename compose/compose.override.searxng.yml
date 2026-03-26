@@ -1,0 +1,15 @@
+# SearXNG metasearch service.
+
+services:
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    expose:
+      - 8080/tcp
+    volumes:
+      - ../searxng:/etc/searxng:Z
+    environment:
+      - SEARXNG_BASE_URL=https://${SEARXNG_HOSTNAME:-localhost}/
+      - UWSGI_WORKERS=${SEARXNG_UWSGI_WORKERS:-4}
+      - UWSGI_THREADS=${SEARXNG_UWSGI_THREADS:-4}

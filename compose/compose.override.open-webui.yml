@@ -1,0 +1,14 @@
+# Open WebUI service.
+
+volumes:
+  open_webui_storage:
+
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    expose:
+      - 8080/tcp
+    volumes:
+      - open_webui_storage:/app/backend/data

@@ -1,0 +1,3 @@
+# Base file for Podman Compose stacks.
+# All bind-mount paths in overrides are resolved relative to this directory.
+services: {}

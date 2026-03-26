@@ -1,0 +1,31 @@
+# ClickHouse backend for Langfuse.
+
+volumes:
+  langfuse_clickhouse_data:
+  langfuse_clickhouse_logs:
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: clickhouse
+    restart: unless-stopped
+    user: "101:101"
+    expose:
+      - 8123/tcp
+      - 9000/tcp
+      - 9009/tcp
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
