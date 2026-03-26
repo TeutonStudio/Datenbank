@@ -14,6 +14,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui.verwaltung.tabelle import Tabelle
+
 
 class VolumenBereich(QGroupBox):
     aktualisieren_angefragt = pyqtSignal()
@@ -32,16 +34,21 @@ class VolumenBereich(QGroupBox):
         kopfzeile.addWidget(self.aktualisieren_button)
         layout.addLayout(kopfzeile)
 
-        self.tabelle = QTableWidget(0, 3, self)
-        self.tabelle.setHorizontalHeaderLabels(["Name", "Treiber", "Mountpoint"])
-        self.tabelle.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.tabelle.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.tabelle.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.tabelle.verticalHeader().setVisible(False)
-        self.tabelle.setAlternatingRowColors(True)
-        self.tabelle.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.tabelle.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.tabelle.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.tabelle = Tabelle(0,self,{
+            "Name": QHeaderView.ResizeMode.ResizeToContents, 
+            "Treiber": QHeaderView.ResizeMode.ResizeToContents, 
+            "Mountpoint": QHeaderView.ResizeMode.Stretch,
+        })
+        # QTableWidget(0, 3, self)
+        # self.tabelle.setHorizontalHeaderLabels(["Name", "Treiber", "Mountpoint"])
+        # self.tabelle.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        # self.tabelle.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # self.tabelle.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        # self.tabelle.verticalHeader().setVisible(False)
+        # self.tabelle.setAlternatingRowColors(True)
+        # self.tabelle.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        # self.tabelle.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        # self.tabelle.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.tabelle)
 
     def setze_volumen(

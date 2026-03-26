@@ -17,6 +17,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui.verwaltung.tabelle import Tabelle
+
 
 @dataclass(frozen=True)
 class DienstDefinition:
@@ -31,6 +33,7 @@ class ContainerBereich(QGroupBox):
     dienste_schalten = pyqtSignal(str, list)
     aktualisieren_angefragt = pyqtSignal()
     einstellungen_angefragt = pyqtSignal()
+    auswahl_geaendert = pyqtSignal()
 
     def __init__(self, dienste: list[DienstDefinition], parent: QWidget | None = None):
         super().__init__("Container", parent)
@@ -40,6 +43,7 @@ class ContainerBereich(QGroupBox):
         self._status_nach_dienst: dict[str, dict[str, object]] = {}
         self._checkboxen: dict[str, QCheckBox] = {}
         self._titel_nach_dienst = {dienst.dienst_id: dienst.titel for dienst in dienste}
+        self._konfiguration_geaendert = False
 
         layout = QVBoxLayout(self)
         kopfzeile = QHBoxLayout()
@@ -49,33 +53,31 @@ class ContainerBereich(QGroupBox):
         )
         self.aktualisieren_button = QPushButton("Aktualisieren", self)
         self.aktualisieren_button.clicked.connect(self.aktualisieren_angefragt.emit)
-        self.start_button = QPushButton("Start", self)
-        self.start_button.clicked.connect(partial(self._sende_kollektivaktion, "start"))
-        self.stop_button = QPushButton("Stop", self)
-        self.stop_button.clicked.connect(partial(self._sende_kollektivaktion, "stop"))
-        self.neustart_button = QPushButton("Neustart", self)
-        self.neustart_button.clicked.connect(
-            partial(self._sende_kollektivaktion, "restart")
-        )
+        self.aktions_button = QPushButton("Start", self)
+        self.aktions_button.clicked.connect(self._sende_kollektivaktion)
         kopfzeile.addWidget(self.einstellungen_button)
         kopfzeile.addStretch()
         kopfzeile.addWidget(self.aktualisieren_button)
-        kopfzeile.addWidget(self.start_button)
-        kopfzeile.addWidget(self.stop_button)
-        kopfzeile.addWidget(self.neustart_button)
+        kopfzeile.addWidget(self.aktions_button)
         layout.addLayout(kopfzeile)
 
-        self.tabelle = QTableWidget(len(dienste), 4, self)
-        self.tabelle.setHorizontalHeaderLabels(["Dienst", "Aktiv", "Container", "Status"])
-        self.tabelle.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.tabelle.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.tabelle.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.tabelle.verticalHeader().setVisible(False)
-        self.tabelle.setAlternatingRowColors(True)
-        self.tabelle.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.tabelle.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.tabelle.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.tabelle.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.tabelle = Tabelle(len(dienste),self,{
+            "Dienst": QHeaderView.ResizeMode.Stretch, 
+            "Aktiv": QHeaderView.ResizeMode.ResizeToContents, 
+            "Container": QHeaderView.ResizeMode.Stretch, 
+            "Status": QHeaderView.ResizeMode.ResizeToContents,
+        })
+        # QTableWidget(len(dienste), 4, self)
+        # self.tabelle.setHorizontalHeaderLabels(["Dienst", "Aktiv", "Container", "Status"])
+        # self.tabelle.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        # self.tabelle.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # self.tabelle.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        # self.tabelle.verticalHeader().setVisible(False)
+        # self.tabelle.setAlternatingRowColors(True)
+        # self.tabelle.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        # self.tabelle.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        # self.tabelle.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        # self.tabelle.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.tabelle.currentCellChanged.connect(self._sende_aktuelle_auswahl)
         layout.addWidget(self.tabelle)
 
@@ -113,9 +115,11 @@ class ContainerBereich(QGroupBox):
         self._auswahl[dienst_id] = status == Qt.CheckState.Checked.value
         self._aktualisiere_zeile(dienst_id)
         self._aktualisiere_aktionsbuttons()
+        self.auswahl_geaendert.emit()
 
-    def _sende_kollektivaktion(self, befehl: str) -> None:
-        dienste = self._dienste_fuer_befehl(befehl)
+    def _sende_kollektivaktion(self) -> None:
+        befehl = self._ermittle_kollektivaktion()
+        dienste = self.ausgewaehlte_dienst_ids()
         if dienste:
             self.dienste_schalten.emit(befehl, dienste)
 
@@ -140,7 +144,6 @@ class ContainerBereich(QGroupBox):
 
         status = self._status_nach_dienst.get(dienst_id, {})
         container_name = str(status.get("container_name") or "-")
-        laeuft = bool(status.get("laeuft"))
         status_text = str(status.get("anzeige_status") or "Unbekannt")
 
         container_item = self.tabelle.item(zeile, 2)
@@ -155,8 +158,10 @@ class ContainerBereich(QGroupBox):
         self,
         status_nach_dienst: dict[str, dict[str, object]],
         podman_hinweis: str = "",
+        konfiguration_geaendert: bool = False,
     ) -> None:
         self._status_nach_dienst = status_nach_dienst
+        self._konfiguration_geaendert = konfiguration_geaendert
 
         for dienst in self._dienste:
             status = status_nach_dienst.get(dienst.dienst_id, {})
@@ -181,35 +186,31 @@ class ContainerBereich(QGroupBox):
         self._aktualisiere_aktionsbuttons()
         self._sende_aktuelle_auswahl()
 
-    def _dienste_fuer_befehl(self, befehl: str) -> list[str]:
-        dienste = []
-        for dienst in self._dienste:
-            if not self._auswahl[dienst.dienst_id]:
-                continue
+    def _irgendetwas_laeuft(self) -> bool:
+        return any(
+            bool(status.get("laeuft")) for status in self._status_nach_dienst.values()
+        )
 
-            status = self._status_nach_dienst.get(dienst.dienst_id, {})
-            container_name = bool(status.get("container_name"))
-            laeuft = bool(status.get("laeuft"))
-
-            if befehl == "start" and container_name and not laeuft:
-                dienste.append(dienst.dienst_id)
-            elif befehl == "stop" and container_name and laeuft:
-                dienste.append(dienst.dienst_id)
-            elif befehl == "restart" and container_name and laeuft:
-                dienste.append(dienst.dienst_id)
-        return dienste
+    def _ermittle_kollektivaktion(self) -> str:
+        if not self._irgendetwas_laeuft():
+            return "start"
+        if self._konfiguration_geaendert:
+            return "restart"
+        return "stop"
 
     def _aktualisiere_aktionsbuttons(self) -> None:
-        self.start_button.setEnabled(bool(self._dienste_fuer_befehl("start")))
-        self.stop_button.setEnabled(bool(self._dienste_fuer_befehl("stop")))
-        self.neustart_button.setEnabled(bool(self._dienste_fuer_befehl("restart")))
+        befehl = self._ermittle_kollektivaktion()
+        texte = {
+            "start": "Start",
+            "stop": "Stop",
+            "restart": "Neustart",
+        }
+        self.aktions_button.setText(texte[befehl])
+        self.aktions_button.setEnabled(bool(self.ausgewaehlte_dienst_ids()))
 
     def _sende_aktuelle_auswahl(self, aktuelle_zeile: int | None = None, *_args) -> None:
         zeile = aktuelle_zeile
-        if zeile is None or zeile < 0:
-            aktuelle_indexe = self.tabelle.selectionModel().selectedRows()
-            zeile = aktuelle_indexe[0].row() if aktuelle_indexe else -1
-
+        if zeile is None or zeile < 0: zeile = self.tabelle.selektierteZeile()
         if zeile < 0:
             self.container_gewaehlt.emit(None, "Kein Dienst ausgewählt")
             return

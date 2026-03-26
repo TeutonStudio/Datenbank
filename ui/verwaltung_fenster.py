@@ -9,7 +9,16 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import QSplitter, QVBoxLayout, QWidget
 
 from compose.env import Umgebungsvariablen
-from compose.podman import baue_startkonfiguration
+from compose.podman import (
+    PodmanComposeStartKonfiguration,
+    baue_startkonfiguration,
+    lade_startkonfiguration,
+    loesche_startkonfiguration,
+    podman_compose_argumente,
+    prozessumgebung_fuer_konfiguration,
+    speichere_startkonfiguration,
+    startkonfigurationen_unterscheiden_sich,
+)
 from ui.verwaltung.ausgabe import AusgabeBereich
 from ui.verwaltung.container import ContainerBereich, DienstDefinition
 from ui.verwaltung.einstellungen_dialog import EinstellungenDialog
@@ -31,8 +40,10 @@ DIENSTE = [
 class VerwaltungFenster(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self._env_pfad = Path(__file__).resolve().parent.parent / ".env"
+        self._projekt_pfad = Path(__file__).resolve().parent.parent
+        self._env_pfad = self._projekt_pfad / ".env"
         self._env_cache_pfad = self._env_pfad.with_suffix(".draft.json")
+        self._compose_status_pfad = self._projekt_pfad / ".compose.state.json"
         self._umgebungsvariablen = Umgebungsvariablen(
             self._env_pfad,
             self._env_cache_pfad,
@@ -41,6 +52,9 @@ class VerwaltungFenster(QWidget):
         self._ausgewaehlter_container: str | None = None
         self._ausgewaehlter_dienst = "Kein Dienst ausgewählt"
         self._letzter_status_fehler = ""
+        self._letzte_startkonfiguration = lade_startkonfiguration(
+            self._compose_status_pfad
+        )
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -64,6 +78,9 @@ class VerwaltungFenster(QWidget):
 
         self.container_bereich.container_gewaehlt.connect(self._setze_ausgewaehlten_container)
         self.container_bereich.dienste_schalten.connect(self._schalte_dienste)
+        self.container_bereich.auswahl_geaendert.connect(
+            self._aktualisiere_containerdarstellung
+        )
         self.container_bereich.aktualisieren_angefragt.connect(self.aktualisiere_inhalt)
         self.container_bereich.einstellungen_angefragt.connect(self._oeffne_einstellungen)
         self.volumen_bereich.aktualisieren_angefragt.connect(self._aktualisiere_volumen)
@@ -87,6 +104,7 @@ class VerwaltungFenster(QWidget):
             self.ausgabe_bereich.setze_ausgabe(
                 f"Einstellungen gespeichert: {self._env_pfad.name}"
             )
+            self._aktualisiere_containerdarstellung()
 
     def aktualisiere_inhalt(self) -> None:
         self._aktualisiere_container()
@@ -97,7 +115,7 @@ class VerwaltungFenster(QWidget):
         container_rohdaten, fehler = self._lade_json_liste(["ps", "-a"])
         self._letzter_status_fehler = fehler
         self._container_status = self._status_nach_dienst(container_rohdaten)
-        self.container_bereich.setze_status(self._container_status, fehler)
+        self._aktualisiere_containerdarstellung()
 
     def _aktualisiere_volumen(self) -> None:
         volumen_rohdaten, fehler = self._lade_json_liste(["volume", "ls"])
@@ -150,26 +168,169 @@ class VerwaltungFenster(QWidget):
             return
 
         if befehl == "start":
-            try:
-                baue_startkonfiguration(dienst_ids, self._umgebungsvariablen)
-            except ValueError as fehler:
-                self.ausgabe_bereich.setze_ausgabe(str(fehler))
+            self._starte_dienste(dienst_ids)
+            return
+
+        if befehl == "restart":
+            self._neustarte_dienste(dienst_ids)
+            return
+
+        self._stoppe_dienste()
+
+    def _aktualisiere_containerdarstellung(self) -> None:
+        self.container_bereich.setze_status(
+            self._container_status,
+            self._letzter_status_fehler,
+            konfiguration_geaendert=self._konfiguration_ist_geaendert(),
+        )
+
+    def _konfiguration_ist_geaendert(self) -> bool:
+        if not self._irgendetwas_laeuft():
+            return False
+        if self._letzte_startkonfiguration is None:
+            return False
+
+        aktuelle_konfiguration = self._gewuenschte_startkonfiguration()
+        if aktuelle_konfiguration is None:
+            return False
+
+        return startkonfigurationen_unterscheiden_sich(
+            aktuelle_konfiguration,
+            self._letzte_startkonfiguration,
+        )
+
+    def _gewuenschte_startkonfiguration(
+        self,
+    ) -> PodmanComposeStartKonfiguration | None:
+        try:
+            return baue_startkonfiguration(
+                self.container_bereich.ausgewaehlte_dienst_ids(),
+                self._umgebungsvariablen,
+            )
+        except ValueError:
+            return None
+
+    def _irgendetwas_laeuft(self) -> bool:
+        return any(
+            bool(status.get("laeuft")) for status in self._container_status.values()
+        )
+
+    def _starte_dienste(self, dienst_ids: list[str]) -> None:
+        try:
+            startkonfiguration = baue_startkonfiguration(
+                dienst_ids,
+                self._umgebungsvariablen,
+            )
+        except ValueError as fehler:
+            self.ausgabe_bereich.setze_ausgabe(str(fehler))
+            return
+
+        ausgabe, fehler = self._fuehre_podman_kommando(
+            podman_compose_argumente(
+                startkonfiguration,
+                "up",
+                "-d",
+                "--remove-orphans",
+            ),
+            umgebung=prozessumgebung_fuer_konfiguration(startkonfiguration),
+            timeout=600,
+        )
+        if fehler:
+            self.ausgabe_bereich.setze_ausgabe(fehler)
+            return
+
+        speichere_startkonfiguration(self._compose_status_pfad, startkonfiguration)
+        self._letzte_startkonfiguration = startkonfiguration
+        self.aktualisiere_inhalt()
+        self.ausgabe_bereich.setze_ausgabe(
+            ausgabe or f"Compose-Stack gestartet: {', '.join(startkonfiguration.dienst_ids)}"
+        )
+
+    def _neustarte_dienste(self, dienst_ids: list[str]) -> None:
+        try:
+            startkonfiguration = baue_startkonfiguration(
+                dienst_ids,
+                self._umgebungsvariablen,
+            )
+        except ValueError as fehler:
+            self.ausgabe_bereich.setze_ausgabe(str(fehler))
+            return
+
+        if self._letzte_startkonfiguration is not None:
+            _, fehler = self._fuehre_podman_kommando(
+                podman_compose_argumente(
+                    self._letzte_startkonfiguration,
+                    "down",
+                    "--remove-orphans",
+                ),
+                umgebung=prozessumgebung_fuer_konfiguration(
+                    self._letzte_startkonfiguration
+                ),
+                timeout=300,
+            )
+            if fehler:
+                self.ausgabe_bereich.setze_ausgabe(fehler)
+                return
+        else:
+            bearbeitet, fehler_liste = self._stoppe_bekannte_container(entfernen=True)
+            if fehler_liste:
+                self.ausgabe_bereich.setze_ausgabe("\n\n".join(fehler_liste))
+                return
+            if not bearbeitet and self._irgendetwas_laeuft():
+                self.ausgabe_bereich.setze_ausgabe(
+                    "Laufende Container konnten vor dem Neustart nicht eindeutig zugeordnet werden."
+                )
                 return
 
-        bearbeitet: list[str] = []
-        fehler_liste: list[str] = []
-        for dienst_id in dienst_ids:
-            status = self._container_status.get(dienst_id, {})
-            container_name = str(status.get("container_name") or "")
-            if not container_name:
-                continue
+        ausgabe, fehler = self._fuehre_podman_kommando(
+            podman_compose_argumente(
+                startkonfiguration,
+                "up",
+                "-d",
+                "--remove-orphans",
+                "--force-recreate",
+            ),
+            umgebung=prozessumgebung_fuer_konfiguration(startkonfiguration),
+            timeout=600,
+        )
+        if fehler:
+            self.ausgabe_bereich.setze_ausgabe(fehler)
+            return
 
-            _, fehler = self._fuehre_podman_kommando([befehl, container_name])
+        speichere_startkonfiguration(self._compose_status_pfad, startkonfiguration)
+        self._letzte_startkonfiguration = startkonfiguration
+        self.aktualisiere_inhalt()
+        self.ausgabe_bereich.setze_ausgabe(
+            ausgabe
+            or f"Compose-Stack neu gestartet: {', '.join(startkonfiguration.dienst_ids)}"
+        )
+
+    def _stoppe_dienste(self) -> None:
+        if self._letzte_startkonfiguration is not None:
+            ausgabe, fehler = self._fuehre_podman_kommando(
+                podman_compose_argumente(
+                    self._letzte_startkonfiguration,
+                    "down",
+                    "--remove-orphans",
+                ),
+                umgebung=prozessumgebung_fuer_konfiguration(
+                    self._letzte_startkonfiguration
+                ),
+                timeout=300,
+            )
             if fehler:
-                fehler_liste.append(f"{container_name}: {fehler}")
-                continue
-            bearbeitet.append(container_name)
+                self.ausgabe_bereich.setze_ausgabe(fehler)
+                return
 
+            loesche_startkonfiguration(self._compose_status_pfad)
+            self._letzte_startkonfiguration = None
+            self.aktualisiere_inhalt()
+            self.ausgabe_bereich.setze_ausgabe(
+                ausgabe or "Compose-Stack gestoppt und entfernt."
+            )
+            return
+
+        bearbeitet, fehler_liste = self._stoppe_bekannte_container()
         self.aktualisiere_inhalt()
 
         if fehler_liste:
@@ -178,8 +339,42 @@ class VerwaltungFenster(QWidget):
 
         if bearbeitet:
             self.ausgabe_bereich.setze_ausgabe(
-                f"{befehl}: {', '.join(bearbeitet)}"
+                f"stop: {', '.join(bearbeitet)}"
             )
+            return
+
+        self.ausgabe_bereich.setze_ausgabe(
+            "Es wurden keine laufenden Container gefunden."
+        )
+
+    def _stoppe_bekannte_container(
+        self,
+        *,
+        entfernen: bool = False,
+    ) -> tuple[list[str], list[str]]:
+        bearbeitet: list[str] = []
+        fehler_liste: list[str] = []
+        befehl = "rm" if entfernen else "stop"
+
+        for dienst in DIENSTE:
+            status = self._container_status.get(dienst.dienst_id, {})
+            container_name = str(status.get("container_name") or "")
+            if not container_name:
+                continue
+            if not entfernen and not bool(status.get("laeuft")):
+                continue
+
+            argumente = [befehl, container_name]
+            if entfernen:
+                argumente.insert(1, "-f")
+
+            _, fehler = self._fuehre_podman_kommando(argumente, timeout=120)
+            if fehler:
+                fehler_liste.append(f"{container_name}: {fehler}")
+                continue
+            bearbeitet.append(container_name)
+
+        return bearbeitet, fehler_liste
 
     def _status_nach_dienst(
         self,
@@ -263,14 +458,22 @@ class VerwaltungFenster(QWidget):
                 continue
         return zeilen, fehler if not zeilen else ""
 
-    def _fuehre_podman_kommando(self, argumente: list[str]) -> tuple[str, str]:
+    def _fuehre_podman_kommando(
+        self,
+        argumente: list[str],
+        *,
+        umgebung: dict[str, str] | None = None,
+        timeout: int = 15,
+    ) -> tuple[str, str]:
         try:
             ergebnis = subprocess.run(
                 ["podman", *argumente],
+                cwd=self._projekt_pfad,
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=15,
+                timeout=timeout,
+                env=umgebung,
             )
         except FileNotFoundError:
             return "", "Podman wurde nicht gefunden. Installation und Runtime folgen im nächsten Schritt."
