@@ -8,7 +8,8 @@ from typing import Any
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import QSplitter, QVBoxLayout, QWidget
 
-from compose.podman import lade_dienst_variablen
+from compose.env import Umgebungsvariablen
+from compose.podman import baue_startkonfiguration
 from ui.verwaltung.ausgabe import AusgabeBereich
 from ui.verwaltung.container import ContainerBereich, DienstDefinition
 from ui.verwaltung.einstellungen_dialog import EinstellungenDialog
@@ -32,7 +33,10 @@ class VerwaltungFenster(QWidget):
         super().__init__(parent)
         self._env_pfad = Path(__file__).resolve().parent.parent / ".env"
         self._env_cache_pfad = self._env_pfad.with_suffix(".draft.json")
-        self._dienst_variablen = lade_dienst_variablen()
+        self._umgebungsvariablen = Umgebungsvariablen(
+            self._env_pfad,
+            self._env_cache_pfad,
+        )
         self._container_status: dict[str, dict[str, object]] = {}
         self._ausgewaehlter_container: str | None = None
         self._ausgewaehlter_dienst = "Kein Dienst ausgewählt"
@@ -74,11 +78,9 @@ class VerwaltungFenster(QWidget):
 
     def _oeffne_einstellungen(self) -> None:
         dialog = EinstellungenDialog(
-            self._env_pfad,
-            self._env_cache_pfad,
+            self._umgebungsvariablen,
             self.container_bereich.ausgewaehlte_dienst_ids(),
             {dienst.dienst_id: dienst.titel for dienst in DIENSTE},
-            self._dienst_variablen,
             self,
         )
         if dialog.exec():
@@ -146,6 +148,13 @@ class VerwaltungFenster(QWidget):
                 "Keine passenden Dienste für diese Kollektiv-Aktion ausgewählt."
             )
             return
+
+        if befehl == "start":
+            try:
+                baue_startkonfiguration(dienst_ids, self._umgebungsvariablen)
+            except ValueError as fehler:
+                self.ausgabe_bereich.setze_ausgabe(str(fehler))
+                return
 
         bearbeitet: list[str] = []
         fehler_liste: list[str] = []
