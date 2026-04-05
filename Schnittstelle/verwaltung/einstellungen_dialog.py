@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from compose.env import Umgebungsvariablen, Umgebungsvariable
+from Kern.compose.env import Umgebungsvariablen, Umgebungsvariable
 
 
 class EinstellungenDialog(QDialog):

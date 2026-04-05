@@ -1,27 +1,16 @@
-import sys
-import os
-import shutil
-import subprocess
-import json
-import socket
-import time
-import re
-import PyQt6
-
 from PyQt6 import (
-    QtWidgets, QtCore, QtGui, QtWebEngineWidgets
+    QtWidgets
 )
 from PyQt6.QtWidgets import (
-    QApplication, QGridLayout, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QTableWidget, QTableWidgetItem, QPlainTextEdit, QPushButton, QMessageBox,
-    QHeaderView, QSplitter, QToolBar, QFileDialog, QDialog, QDialogButtonBox,
-    QLabel, QLineEdit, QListWidgetItem, QFrame
+    QFrame
 )
-from PyQt6.QtCore import QUrl, QTimer, Qt, QSize
-from PyQt6.QtGui import QAction, QFont, QIcon, QPixmap
-from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QIcon, QPixmap
 
 from typing import Callable
+
+from Schnittstelle.vertikale_leiste import VertikaleLeiste
+
 
 class HorizontaleLeiste(QFrame):
     def __init__(self, parent=None):
@@ -67,7 +56,7 @@ class HorizontaleLeiste(QFrame):
         pfad = "./ui/icon/" + ("open" if status else "close") + ".svg"
         self.menu_btn.setIcon(QIcon(pfad))
 
-    def init_single_slot(self, side_menu, setCurrentIndex):
+    def init_single_slot(self, side_menu: VertikaleLeiste, setCurrentIndex: Callable[[int],None]):
         self.menu_btn.toggled['bool'].connect(side_menu.setze_darstellung)
         self.menu_btn.toggled['bool'].connect(self.title_label.setHidden)
         side_menu.currentRowChanged['int'].connect(setCurrentIndex)

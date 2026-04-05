@@ -23,16 +23,14 @@ class VertikaleLeiste(QListWidget):
 
     def aktualisiere(self):
         self.clear()
-        eintragsListe: list[Callable[[bool], None]] = []
+        eintrag_liste: list[Callable[[bool], None]] = []
 
         for text in self.liste:
-            eintrag = VertikalerEintrag(text)
-            self.addItem(eintrag)
-            eintragsListe.append(
-                lambda nur_icon, e=eintrag: e.zeige_icon() if nur_icon else e.zeige_texticon()
-            )
+            vert_eintrag = VertikalerEintrag(text)
+            self.addItem(vert_eintrag)
+            eintrag_liste.append(vert_eintrag.schalter)
 
-        self.nur_icon = lambda schalter: [eintrag(schalter) for eintrag in eintragsListe]
+        self.nur_icon = lambda schalter: [eintrag(schalter) for eintrag in eintrag_liste]
         self.setze_darstellung(self._nur_icon)
 
     def neue_liste(self, liste: list[str]):
@@ -60,7 +58,9 @@ class VertikalerEintrag(QListWidgetItem):
         else: pfad = "./ui/icon/settings.svg"
         self.setIcon(QIcon(pfad))
         self.setSizeHint(QSize(40, 40))
-    
+
+    def schalter(self,b: bool): self.zeige_icon() if b else self.zeige_texticon()
+
     def zeige_texticon(self):
         self.definiere_icon()
         self.setText(self.text_str)

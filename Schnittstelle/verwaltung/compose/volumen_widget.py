@@ -2,19 +2,17 @@ from __future__ import annotations
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QPushButton,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from ui.verwaltung.tabelle import Tabelle
+from Schnittstelle.verwaltung.tabelle_widget import Tabelle
 
 
 class VolumenBereich(QGroupBox):

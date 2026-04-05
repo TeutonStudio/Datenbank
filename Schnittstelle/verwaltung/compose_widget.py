@@ -1,28 +1,18 @@
-from __future__ import annotations
-
 import json
 import subprocess
-from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtWidgets import QSplitter, QVBoxLayout, QWidget
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QSplitter
 
-from compose.env import Umgebungsvariablen
-from compose.podman import (
-    PodmanComposeStartKonfiguration,
-    baue_startkonfiguration,
-    lade_startkonfiguration,
-    loesche_startkonfiguration,
-    podman_compose_argumente,
-    prozessumgebung_fuer_konfiguration,
-    speichere_startkonfiguration,
-    startkonfigurationen_unterscheiden_sich,
-)
-from ui.verwaltung.ausgabe import AusgabeBereich
-from ui.verwaltung.container import ContainerBereich, DienstDefinition
-from ui.verwaltung.einstellungen_dialog import EinstellungenDialog
-from ui.verwaltung.volumen import VolumenBereich
+from Kern.podman import lade_startkonfiguration, speichere_ausgewaehlte_dienste, \
+    startkonfigurationen_unterscheiden_sich, PodmanComposeStartKonfiguration, baue_startkonfiguration, \
+    podman_compose_argumente, prozessumgebung_fuer_konfiguration, speichere_startkonfiguration, \
+    loesche_startkonfiguration
+from Schnittstelle.verwaltung.compose.ausgabe_widget import AusgabeBereich
+from Schnittstelle.verwaltung.compose.container_widget import ContainerBereich, DienstDefinition
+from Schnittstelle.verwaltung.compose.volumen_widget import VolumenBereich
+from Schnittstelle.verwaltung.einstellungen_dialog import EinstellungenDialog
 
 DIENSTE = [
     DienstDefinition("n8n", "N8N", ("n8n",), pflichtdienst=True),
@@ -36,32 +26,26 @@ DIENSTE = [
     DienstDefinition("ollama", "Ollama", ("ollama", "ollama-cpu", "ollama-gpu", "ollama-gpu-amd")),
 ]
 
-
-class VerwaltungFenster(QWidget):
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self._projekt_pfad = Path(__file__).resolve().parent.parent
-        self._env_pfad = self._projekt_pfad / ".env"
-        self._env_cache_pfad = self._env_pfad.with_suffix(".draft.json")
+# TODO vereinfachen
+# TODO einen Selektor definieren, der übergreifend eines aus entweder container oder volumen auswählt (oder nichts). Dieser Selektor definiert welches log im ausgabe dargestellt wird (bei nichts ist es das des gesamten container)
+class ComposeWidget(QSplitter):
+    def __init__(self,parent):
+        super().__init__(Qt.Orientation.Vertical,parent)
+        self._projekt_pfad = parent.projekt_pfad
         self._compose_status_pfad = self._projekt_pfad / ".compose.state.json"
-        self._umgebungsvariablen = Umgebungsvariablen(
-            self._env_pfad,
-            self._env_cache_pfad,
-        )
-        self._container_status: dict[str, dict[str, object]] = {}
-        self._ausgewaehlter_container: str | None = None
-        self._ausgewaehlter_dienst = "Kein Dienst ausgewählt"
-        self._letzter_status_fehler = ""
         self._letzte_startkonfiguration = lade_startkonfiguration(
             self._compose_status_pfad
         )
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-
         self.container_bereich = ContainerBereich(DIENSTE, self)
-        self.volumen_bereich = VolumenBereich(self)
-        self.ausgabe_bereich = AusgabeBereich(self)
+        self.volumen_bereich = VolumenBereich(parent)
+        self.ausgabe_bereich = AusgabeBereich(parent)
+
+        # if self._letzte_dienstauswahl is not None:
+        #     self.container_bereich.setze_auswahl(
+        #         self._letzte_dienstauswahl,
+        #         als_manuelle_auswahl=True,
+        #     )
 
         unterer_splitter = QSplitter(Qt.Orientation.Horizontal, self)
         unterer_splitter.addWidget(self.volumen_bereich)
@@ -69,42 +53,22 @@ class VerwaltungFenster(QWidget):
         unterer_splitter.setStretchFactor(0, 1)
         unterer_splitter.setStretchFactor(1, 2)
 
-        haupt_splitter = QSplitter(Qt.Orientation.Vertical, self)
-        haupt_splitter.addWidget(self.container_bereich)
-        haupt_splitter.addWidget(unterer_splitter)
-        haupt_splitter.setStretchFactor(0, 1)
-        haupt_splitter.setStretchFactor(1, 2)
-        layout.addWidget(haupt_splitter)
+        self.addWidget(self.container_bereich)
+        self.addWidget(unterer_splitter)
+
+        self.setStretchFactor(0, 1)
+        self.setStretchFactor(1, 2)
+
+        self.volumen_bereich.aktualisieren_angefragt.connect(self._aktualisiere_volumen)
+        self.ausgabe_bereich.aktualisieren_angefragt.connect(self._aktualisiere_logs)
 
         self.container_bereich.container_gewaehlt.connect(self._setze_ausgewaehlten_container)
         self.container_bereich.dienste_schalten.connect(self._schalte_dienste)
-        self.container_bereich.auswahl_geaendert.connect(
-            self._aktualisiere_containerdarstellung
-        )
+        self.container_bereich.auswahl_geaendert.connect(self._bei_auswahl_geaendert)
         self.container_bereich.aktualisieren_angefragt.connect(self.aktualisiere_inhalt)
         self.container_bereich.einstellungen_angefragt.connect(self._oeffne_einstellungen)
         self.volumen_bereich.aktualisieren_angefragt.connect(self._aktualisiere_volumen)
         self.ausgabe_bereich.aktualisieren_angefragt.connect(self._aktualisiere_logs)
-
-        self.aktualisierungs_timer = QTimer(self)
-        self.aktualisierungs_timer.setInterval(5000)
-        self.aktualisierungs_timer.timeout.connect(self.aktualisiere_inhalt)
-        self.aktualisierungs_timer.start()
-
-        self.aktualisiere_inhalt()
-
-    def _oeffne_einstellungen(self) -> None:
-        dialog = EinstellungenDialog(
-            self._umgebungsvariablen,
-            self.container_bereich.ausgewaehlte_dienst_ids(),
-            {dienst.dienst_id: dienst.titel for dienst in DIENSTE},
-            self,
-        )
-        if dialog.exec():
-            self.ausgabe_bereich.setze_ausgabe(
-                f"Einstellungen gespeichert: {self._env_pfad.name}"
-            )
-            self._aktualisiere_containerdarstellung()
 
     def aktualisiere_inhalt(self) -> None:
         self._aktualisiere_container()
@@ -177,6 +141,14 @@ class VerwaltungFenster(QWidget):
 
         self._stoppe_dienste()
 
+    def _bei_auswahl_geaendert(self) -> None:
+        self._letzte_dienstauswahl = tuple(self.container_bereich.ausgewaehlte_dienst_ids())
+        speichere_ausgewaehlte_dienste(
+            self._compose_status_pfad,
+            self._letzte_dienstauswahl,
+        )
+        self._aktualisiere_containerdarstellung()
+
     def _aktualisiere_containerdarstellung(self) -> None:
         self.container_bereich.setze_status(
             self._container_status,
@@ -198,6 +170,46 @@ class VerwaltungFenster(QWidget):
             aktuelle_konfiguration,
             self._letzte_startkonfiguration,
         )
+
+    def _oeffne_einstellungen(self) -> None:
+        dialog = EinstellungenDialog(
+            self._umgebungsvariablen,
+            self.container_bereich.ausgewaehlte_dienst_ids(),
+            {dienst.dienst_id: dienst.titel for dienst in DIENSTE},
+            self,
+        )
+        if dialog.exec():
+            self.ausgabe_bereich.setze_ausgabe(
+                f"Einstellungen gespeichert: {self._env_pfad.name}"
+            )
+            self._aktualisiere_containerdarstellung()
+
+    def _lade_json_liste(self, basis_befehl: list[str]) -> tuple[list[dict[str, any]], str]:
+        daten, fehler = self._fuehre_podman_kommando([*basis_befehl, "--format", "json"])
+        if daten:
+            try:
+                geparst = json.loads(daten)
+                if isinstance(geparst, list):
+                    return geparst, ""
+                if isinstance(geparst, dict):
+                    return [geparst], ""
+            except json.JSONDecodeError:
+                pass
+
+        daten, fehler = self._fuehre_podman_kommando([*basis_befehl, "--format", "{{json .}}"])
+        if not daten:
+            return [], fehler
+
+        zeilen = []
+        for zeile in daten.splitlines():
+            zeile = zeile.strip()
+            if not zeile:
+                continue
+            try:
+                zeilen.append(json.loads(zeile))
+            except json.JSONDecodeError:
+                continue
+        return zeilen, fehler if not zeilen else ""
 
     def _gewuenschte_startkonfiguration(
         self,
@@ -430,33 +442,6 @@ class VerwaltungFenster(QWidget):
         if isinstance(namen, list):
             return [str(name) for name in namen if name]
         return []
-
-    def _lade_json_liste(self, basis_befehl: list[str]) -> tuple[list[dict[str, Any]], str]:
-        daten, fehler = self._fuehre_podman_kommando([*basis_befehl, "--format", "json"])
-        if daten:
-            try:
-                geparst = json.loads(daten)
-                if isinstance(geparst, list):
-                    return geparst, ""
-                if isinstance(geparst, dict):
-                    return [geparst], ""
-            except json.JSONDecodeError:
-                pass
-
-        daten, fehler = self._fuehre_podman_kommando([*basis_befehl, "--format", "{{json .}}"])
-        if not daten:
-            return [], fehler
-
-        zeilen = []
-        for zeile in daten.splitlines():
-            zeile = zeile.strip()
-            if not zeile:
-                continue
-            try:
-                zeilen.append(json.loads(zeile))
-            except json.JSONDecodeError:
-                continue
-        return zeilen, fehler if not zeilen else ""
 
     def _fuehre_podman_kommando(
         self,

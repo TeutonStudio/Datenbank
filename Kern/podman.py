@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
 
-from compose.env import Umgebungsvariablen
+from Kern.compose.env import Umgebungsvariablen
 
 PROJEKT_NAME = "n8nanwendung"
+_AUSGEWAEHLTE_DIENSTE_SCHLUESSEL = "ausgewaehlte_dienst_ids"
 
 
 @dataclass(frozen=True)
@@ -71,22 +73,17 @@ def speichere_startkonfiguration(
     pfad: Path,
     konfiguration: PodmanComposeStartKonfiguration,
 ) -> None:
-    pfad.write_text(
-        json.dumps(konfiguration.als_dict(), ensure_ascii=True, indent=2) + "\n",
-        encoding="utf-8",
+    daten = _lade_status_daten(pfad)
+    daten.update(konfiguration.als_dict())
+    daten[_AUSGEWAEHLTE_DIENSTE_SCHLUESSEL] = list(
+        _eindeutige_dienst_ids(konfiguration.dienst_ids)
     )
+    _speichere_status_daten(pfad, daten)
 
 
 def lade_startkonfiguration(pfad: Path) -> PodmanComposeStartKonfiguration | None:
-    if not pfad.exists():
-        return None
-
-    try:
-        daten = json.loads(pfad.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return None
-
-    if not isinstance(daten, dict):
+    daten = _lade_status_daten(pfad)
+    if not daten:
         return None
 
     dienst_ids = daten.get("dienst_ids")
@@ -132,8 +129,46 @@ def startkonfigurationen_unterscheiden_sich(
 
 
 def loesche_startkonfiguration(pfad: Path) -> None:
-    if pfad.exists():
+    daten = _lade_status_daten(pfad)
+    if not daten:
+        if pfad.exists():
+            pfad.unlink()
+        return
+
+    for schluessel in ("dienst_ids", "compose_dateien", "umgebungsvariablen"):
+        daten.pop(schluessel, None)
+
+    if daten:
+        _speichere_status_daten(pfad, daten)
+    elif pfad.exists():
         pfad.unlink()
+
+
+def speichere_ausgewaehlte_dienste(
+    pfad: Path,
+    dienst_ids: Iterable[str],
+) -> None:
+    daten = _lade_status_daten(pfad)
+    daten[_AUSGEWAEHLTE_DIENSTE_SCHLUESSEL] = list(_eindeutige_dienst_ids(dienst_ids))
+    _speichere_status_daten(pfad, daten)
+
+
+def lade_ausgewaehlte_dienste(pfad: Path) -> tuple[str, ...] | None:
+    daten = _lade_status_daten(pfad)
+    if not daten:
+        return None
+
+    dienst_ids = daten.get(_AUSGEWAEHLTE_DIENSTE_SCHLUESSEL, daten.get("dienst_ids"))
+    if not isinstance(dienst_ids, list):
+        return None
+
+    rekonstruierte_dienst_ids = []
+    for dienst_id in dienst_ids:
+        if not isinstance(dienst_id, str) or not dienst_id:
+            return None
+        rekonstruierte_dienst_ids.append(dienst_id)
+
+    return _eindeutige_dienst_ids(rekonstruierte_dienst_ids)
 
 
 def _serialisiere_compose_dateien(compose_dateien: tuple[Path, ...]) -> tuple[str, ...]:
@@ -152,3 +187,33 @@ def _deserialisiere_compose_datei(datei: str) -> Path:
     if pfad.is_absolute():
         return pfad
     return (Umgebungsvariablen.COMPOSE_VERZEICHNIS.parent / pfad).resolve()
+
+
+def _lade_status_daten(pfad: Path) -> dict[str, object]:
+    if not pfad.exists():
+        return {}
+
+    try:
+        daten = json.loads(pfad.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+    return daten if isinstance(daten, dict) else {}
+
+
+def _speichere_status_daten(pfad: Path, daten: dict[str, object]) -> None:
+    pfad.write_text(
+        json.dumps(daten, ensure_ascii=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _eindeutige_dienst_ids(dienst_ids: Iterable[str]) -> tuple[str, ...]:
+    einzigartige_dienst_ids: list[str] = []
+    bekannte_dienst_ids: set[str] = set()
+    for dienst_id in dienst_ids:
+        if not dienst_id or dienst_id in bekannte_dienst_ids:
+            continue
+        bekannte_dienst_ids.add(dienst_id)
+        einzigartige_dienst_ids.append(dienst_id)
+    return tuple(einzigartige_dienst_ids)

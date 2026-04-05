@@ -5,19 +5,17 @@ from functools import partial
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
     QCheckBox,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QPushButton,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from ui.verwaltung.tabelle import Tabelle
+from Schnittstelle.verwaltung.tabelle_widget import Tabelle
 
 
 @dataclass(frozen=True)
@@ -116,6 +114,31 @@ class ContainerBereich(QGroupBox):
         self._aktualisiere_zeile(dienst_id)
         self._aktualisiere_aktionsbuttons()
         self.auswahl_geaendert.emit()
+
+    def setze_auswahl(
+        self,
+        dienst_ids: list[str] | tuple[str, ...],
+        *,
+        als_manuelle_auswahl: bool = False,
+    ) -> None:
+        ausgewaehlte_dienste = set(dienst_ids)
+        if als_manuelle_auswahl:
+            self._manuelle_auswahl = {
+                dienst.dienst_id for dienst in self._dienste if not dienst.pflichtdienst
+            }
+
+        for dienst in self._dienste:
+            ist_ausgewaehlt = dienst.pflichtdienst or dienst.dienst_id in ausgewaehlte_dienste
+            self._auswahl[dienst.dienst_id] = ist_ausgewaehlt
+            checkbox = self._checkboxen.get(dienst.dienst_id)
+            if checkbox is None:
+                continue
+            vorher = checkbox.blockSignals(True)
+            checkbox.setChecked(ist_ausgewaehlt)
+            checkbox.blockSignals(vorher)
+
+        self._aktualisiere_aktionsbuttons()
+        self._sende_aktuelle_auswahl()
 
     def _sende_kollektivaktion(self) -> None:
         befehl = self._ermittle_kollektivaktion()

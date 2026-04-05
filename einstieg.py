@@ -1,13 +1,6 @@
 import sys
-import os
-import shutil
-import subprocess
-import json
-import socket
-import time
-import re
 from PyQt6.QtWidgets import QApplication
-from ui.haupt_fenster import HauptFenster
+from Schnittstelle.haupt_fenster import HauptFenster
 class Anwendung(QApplication):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

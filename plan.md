@@ -148,6 +148,77 @@ Außerdem blockiert sie Starts, wenn Pflichtvariablen fehlen.
 3. Supabase-Integration aus dem Platzhalterzustand lösen
 4. Installationsstatus, Healthchecks und UI-Erreichbarkeit je Dienst ergänzen
 
+## Umsetzungspläne für vorhandene TODOs
+
+### 1. `Schnittstelle/web_widget.py`: Website-Authentifizierung einbauen
+
+Ziel:
+
+- Web-Dienstseiten sollen auch dann direkt in der Qt-Webansicht funktionieren, wenn der Dienst eine Anmeldung oder vorab gesetzte Session-Daten benötigt.
+
+Umsetzungsplan:
+
+1. Für Web-Dienste eine kleine Metadatenstruktur einführen, die URL, Port, optionalen Login-Typ und benötigte Variablen beschreibt.
+2. Die Zugangsdaten nicht im `QWebEngineView` hinterlegen, sondern aus der bestehenden Einstellungs- und Umgebungsvariablen-Schicht beziehen.
+3. In `ProgrammSeite` eine klar getrennte Auth-Schicht ergänzen:
+   - Basic-Auth für einfache Dienste
+   - Cookie- oder Token-Setzen für Web-UIs mit Session
+   - später optional Formular-Login für Sonderfälle
+4. Vor dem Laden der Zielseite zuerst die Authentifizierung ausführen und Fehlerzustände sichtbar an die UI zurückmelden.
+5. Für nicht konfigurierte Zugangsdaten einen kontrollierten Fallback ergänzen, damit die Seite nicht still scheitert.
+
+Abnahmekriterien:
+
+- Zugangsdaten kommen ausschließlich aus Konfiguration oder Einstellungen.
+- Eine fehlgeschlagene Anmeldung erzeugt eine sichtbare Fehlermeldung.
+- Die Webansicht bleibt wiederverwendbar und enthält keine dienstspezifisch hartcodierten Spezialfälle.
+
+### 2. `Schnittstelle/haupt_fenster.py`: Port aus dem Umgebungskontext auslesen
+
+Ziel:
+
+- Die Web-URL darf nicht mehr fest auf `5678` verdrahtet sein, sondern muss aus der aktiven Dienstkonfiguration ableitbar werden.
+
+Umsetzungsplan:
+
+1. Die Verantwortung für Host, Port und URL-Pfad aus `FensterLayout` herausziehen und in eine fachliche Dienstbeschreibung verlagern.
+2. Für `n8n` und spätere Web-Dienste definieren, welche Umgebungsvariable oder welcher Standardwert den Port liefert.
+3. Die effektive URL aus derselben Konfiguration ableiten, die auch für Compose-Start und Einstellungen verwendet wird.
+4. Beim Aufbau der `ProgrammSeite` die berechnete URL injizieren, statt sie per Stringverkettung lokal zu erzeugen.
+5. Für fehlende oder ungültige Portwerte eine validierte Fallback-Strategie ergänzen, inklusive Meldung in der Oberfläche.
+
+Abnahmekriterien:
+
+- Es gibt keinen hartcodierten Port mehr im Hauptfenster.
+- Änderungen an relevanten Umgebungsvariablen wirken sich auf die Web-URL aus.
+- Die URL-Auflösung ist für weitere Dienste wiederverwendbar.
+
+### 3. `Schnittstelle/verwaltung/compose_widget.py`: Widget vereinfachen
+
+Ziel:
+
+- `ComposeWidget` soll wieder klar lesbar werden und nur noch UI-Orchestrierung enthalten, nicht gleichzeitig Runtime-, Mapping- und Persistenzlogik.
+
+Umsetzungsplan:
+
+1. Die Initialisierung in kleine private Setup-Methoden aufteilen:
+   - Status laden
+   - Teilwidgets erzeugen
+   - Splitter aufbauen
+   - Signale verbinden
+   - Anfangszustand anwenden
+2. Laufzeitnahe Podman-Operationen in eine eigene Runtime-Hilfsschicht verschieben, damit `ComposeWidget` nicht selbst Befehle, Timeouts und Fehlertexte verwaltet.
+3. Die Statusabbildung von Podman-JSON auf Dienststatus in eine separate Funktion oder Klasse auslagern, damit Darstellung und Datenermittlung getrennt bleiben.
+4. Zustandsfelder wie ausgewählte Dienste, letzte Startkonfiguration, letzter Fehler und ausgewählter Container an einer Stelle zentral initialisieren.
+5. Doppelte Signalverbindungen und redundante Aktualisierungswege entfernen, damit jede Benutzeraktion nur noch einen klaren Fluss auslöst.
+6. Für Start, Neustart und Stop gemeinsame Hilfsmethoden einführen, damit Compose-Aufrufe, Persistenz und UI-Rückmeldungen nicht mehrfach implementiert werden.
+
+Abnahmekriterien:
+
+- `ComposeWidget` konzentriert sich auf UI-Ablauf und Delegation.
+- Podman-spezifische Details sind außerhalb des Widgets gekapselt.
+- Start-, Neustart- und Stop-Logik teilen sich gemeinsame Pfade statt duplizierten Code.
+
 ## Nächste konkrete Umsetzungsreihenfolge
 
 1. Compose-Start und Compose-Stop in `compose/podman.py` und `ui/verwaltung_fenster.py` umsetzen.
