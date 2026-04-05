@@ -1,246 +1,236 @@
 # Plan Neuer N8N-Verwalter
 
-## Aktueller Stand
+## Primärer Abschnitt: Aktuelle Programmstruktur und Funktionalität
 
-Die Anwendung besitzt bereits eine lauffähige Verwaltungsseite in Qt:
+### Anwendungseinstieg
 
-- `ui/verwaltung_fenster.py` bündelt Container-, Volumen- und Logansicht.
-- `ui/verwaltung/container.py` zeigt Dienste, Aktivierung und Start/Stop/Neustart.
-- `ui/verwaltung/einstellungen_dialog.py` öffnet die Bearbeitung der Umgebungsvariablen.
+- `einstieg.py` startet die Qt-Anwendung, lädt `style.qss` und öffnet `HauptFenster`.
+- Die Anwendung ist aktuell als klassische Desktop-Oberfläche auf Basis von `PyQt6` aufgebaut.
 
-Die Verwaltung der Umgebungsvariablen ist jetzt zentralisiert:
+### Hauptfenster und Navigation
 
-- `compose/env.py` enthält die Klasse `Umgebungsvariablen`.
-- Diese Klasse ist die einzige Stelle für:
-  - Definition der dienstbezogenen Variablen
-  - Standardwerte
-  - Laden von `.env`
+- `Schnittstelle/haupt_fenster.py` baut das Hauptlayout aus `HorizontaleLeiste`, `VertikaleLeiste` und einem zentralen `QStackedWidget`.
+- Die Navigation ist derzeit statisch und enthält genau zwei Seiten:
+  - `Verwaltung`
+  - `N8N`
+- Der Seitenwechsel ist weiterhin indexbasiert.
+- Die Seite `N8N` wird über `Schnittstelle/web_widget.py:ProgrammSeite` als `QWebEngineView` eingebettet.
+- Die URL der Webansicht ist aktuell noch fest auf `http://localhost:5678` gesetzt.
+- Für eingebettete Web-Dienstseiten gibt es noch keine Authentifizierungslogik.
+
+### Verwaltungsseite
+
+- `Schnittstelle/verwaltung/verwaltung_fenster.py` ist der Einstiegspunkt für die fachliche Verwaltungsansicht.
+- Dort werden Projektpfad, `.env`-Pfad und Entwurfspfad `.env.draft.json` aufgebaut.
+- `VerwaltungFenster` erzeugt eine Instanz von `Kern.compose.env:Umgebungsvariablen` und reicht sie an die Verwaltungskomponenten weiter.
+- Zusätzlich startet `VerwaltungFenster` einen `QTimer`, der alle 5 Sekunden `ComposeWidget.aktualisiere_inhalt()` ausführt.
+
+### Compose-Verwaltung
+
+- `Schnittstelle/verwaltung/compose_widget.py` ist aktuell die zentrale Orchestrierung für Runtime-Aktionen und Darstellung.
+- Das Widget besteht aus drei Bereichen:
+  - `ContainerBereich`
+  - `VolumenBereich`
+  - `AusgabeBereich`
+- `ContainerBereich` zeigt die bekannten Dienste, ihren Aktivierungsstatus, den zugeordneten Container und den aktuellen Status.
+- Der Aktionsbutton im `ContainerBereich` schaltet abhängig vom Laufzustand zwischen `Start`, `Stop` und `Neustart`.
+- Optionale Dienste werden automatisch als ausgewählt markiert, wenn laufende Container erkannt werden und der Nutzer diese Auswahl nicht manuell überschrieben hat.
+- `VolumenBereich` listet die per `podman volume ls` gefundenen Volumen.
+- `AusgabeBereich` zeigt aktuell die Logs des ausgewählten Containers.
+- Die Auswahl für die Ausgabe ist derzeit nur auf Container aus dem `ContainerBereich` ausgelegt; ein übergreifendes Auswahlmodell für Container, Volumen oder "nichts ausgewählt" existiert noch nicht.
+
+### Runtime und Persistenz
+
+- `Kern/podman.py` enthält die Compose-bezogene Laufzeitlogik und die Statuspersistenz.
+- Die Klasse `PodmanComposeStartKonfiguration` bündelt:
+  - ausgewählte Dienste
+  - Compose-Dateien
+  - effektive Umgebungsvariablen
+- `baue_startkonfiguration(...)` validiert Pflichtvariablen und baut daraus die Compose-Konfiguration für den Stack.
+- `podman_compose_argumente(...)` erzeugt die finalen Argumente für `podman compose`.
+- `prozessumgebung_fuer_konfiguration(...)` kombiniert Prozessumgebung und effektive Variablen.
+- Die letzte Startkonfiguration und die gewählten Dienste werden in `.compose.state.json` gespeichert.
+- `ComposeWidget` nutzt bereits `podman compose up` und `podman compose down`.
+- Für Stop/Neustart gibt es einen Fallback über direkte `podman stop`- bzw. `podman rm`-Aufrufe, wenn keine gespeicherte Compose-Startkonfiguration vorliegt.
+- Die Erkennung `konfiguration_geaendert` ist bereits vorhanden und vergleicht die gewünschte Konfiguration mit der zuletzt gespeicherten.
+- Die Dienstauswahl wird bereits gespeichert, aber das Wiedereinlesen in die UI ist aktuell noch auskommentiert.
+
+### Umgebungsvariablen und Einstellungen
+
+- `Kern/compose/env.py` ist die zentrale Fachschicht für Umgebungsvariablen.
+- Die Klasse `Umgebungsvariablen` verwaltet:
+  - Zuordnung von Diensten zu Compose-Dateien
+  - Extraktion von `${VARIABLE}`-Definitionen aus den Compose-Dateien
+  - zusätzliche fachliche Variablendefinitionen pro Dienst
+  - Compose-Standardwerte
+  - Laden aus `.env`
   - Zwischenspeicherung in `.env.draft.json`
   - Validierung fehlender Pflichtvariablen
   - Bereitstellung effektiver Werte für den Compose-Start
+- `Schnittstelle/verwaltung/einstellungen_dialog.py` arbeitet bereits ausschließlich über diese Objekt-API.
+- Der Dialog ergänzt fehlende Variablen der aktuellen Dienstauswahl automatisch, erlaubt zusätzliche manuelle Variablen, speichert Änderungen laufend als Entwurf und schreibt erst beim Bestätigen nach `.env`.
 
-Der Datenfluss ist damit durchgängig:
+### Aktuell abgebildete Dienste
 
-1. `VerwaltungFenster` erzeugt eine Instanz von `Umgebungsvariablen`.
-2. Diese Instanz wird an `EinstellungenDialog` weitergereicht.
-3. Der Dialog liest und schreibt keine `.env`-Datei mehr selbst.
-4. `compose/podman.py` erhält dieselbe Instanz, um die Startkonfiguration zu bauen.
+- `n8n`
+- `open-webui`
+- `flowise`
+- `langfuse`
+- `neo4j`
+- `minio`
+- `searxng`
+- `supabase`
+- `ollama`
 
-## Zielbild
+### Funktionaler Ist-Stand
 
-Die Anwendung bleibt eine klassische Qt-Oberfläche mit drei festen Bereichen:
+- Die Anwendung kann den ausgewählten Compose-Stack starten, stoppen und bei Konfigurationsänderungen neu starten.
+- Containerstatus, Volumenliste und Logausgabe werden zyklisch aktualisiert.
+- Die Umgebungsvariablen der aktivierten Dienste werden zentral verwaltet und vor dem Start validiert.
+- Die derzeitige Webintegration ist noch auf eine einzelne statische `N8N`-Seite beschränkt.
+- Dienstmetadaten sind aktuell doppelt gepflegt:
+  - in `Schnittstelle/verwaltung/verwaltung_fenster.py`
+  - in `Schnittstelle/verwaltung/compose_widget.py`
 
-- `HorizontaleLeiste`: Kopfzeile mit Titel und Navigationstoggle
-- `VertikaleLeiste`: Navigation
-- zentrales Widget: Verwalter oder Dienst-UI
+## Sekundärer Abschnitt: Umsetzungspläne für vorhandene TODOs
 
-Die `HorizontaleLeiste` enthält keine Tabs und keine Seitenlogik.
+### Gruppe 1: Dienstseiten-Konfiguration und Web-Authentifizierung
 
-## Fachliche Leitlinien
+Bezug auf TODOs:
 
-### Runtime
+- `Schnittstelle/haupt_fenster.py`: `PORT aus dem umgebungskontext auslesen`
+- `Schnittstelle/web_widget.py`: `Websiten auth einbauen`
 
-- Es wird ausschließlich `podman` unterstützt.
-- Die UI soll nicht direkt mit Compose-Dateien oder `.env`-Dateien arbeiten.
-- UI und Runtime sprechen über klar getrennte Anwendungsobjekte.
+Ziel:
 
-### Dienste
+- Web-Dienstseiten sollen nicht mehr auf hartcodierten URLs beruhen, sondern aus derselben Dienst- und Konfigurationslogik entstehen wie Compose-Start und Einstellungen.
+- Web-Dienstseiten sollen optional eine Authentifizierung unterstützen, ohne dienstspezifische Sonderfälle direkt in `QWebEngineView` zu verteilen.
 
-- `n8n` bleibt Pflichtdienst.
-- Alle anderen Dienste sind optional.
-- Die Auswahl erfolgt pro Dienst.
-- Ollama-Profile bleiben als spätere Erweiterung vorgesehen.
+Umsetzungsplan:
 
-### Umgebungsvariablen
+1. Einen zentralen Dienstkatalog einführen, der pro Dienst mindestens Titel, Container-Aliase, Web-URL-Bausteine und optionalen Auth-Typ beschreibt.
+2. Die URL-Auflösung aus `FensterLayout` herausziehen und in diesen Dienstkatalog oder eine kleine Hilfsschicht verlagern.
+3. Die URL aus effektiven Umgebungswerten ableiten, damit Port- oder Host-Änderungen aus `.env` unmittelbar berücksichtigt werden können.
+4. `ProgrammSeite` so umbauen, dass sie nicht nur eine rohe URL, sondern eine kleine Konfiguration für Zielseite und Authentifizierungsmodus erhält.
+5. Eine Authentifizierungsschicht definieren, die mindestens die Modi `keine`, `basic` und `cookie/token-vorbelegt` sauber abbilden kann.
+6. Fehlerfälle sichtbar in der UI machen, damit ungültige Zugangsdaten oder nicht auflösbare URLs nicht als leere Webansicht enden.
 
-Die Klasse `compose/env.py:Umgebungsvariablen` ist die zentrale Fachinstanz für Variablen.
+Abnahmekriterien:
 
-Verantwortlichkeiten:
+- Im Hauptfenster gibt es keinen hartcodierten Dienstport mehr.
+- Die Web-URL wird aus fachlicher Konfiguration und effektiven Umgebungswerten abgeleitet.
+- `ProgrammSeite` bleibt generisch und enthält keine fest eingebauten Spezialfälle für einzelne Dienste.
+- Fehlgeschlagene Authentifizierung und fehlerhafte URL-Auflösung sind für den Nutzer sichtbar.
 
-- Zuordnung von Diensten zu relevanten Compose-Dateien
-- Extraktion von `${VARIABLE}` aus Compose-Dateien
-- Ergänzung zusätzlicher fachlicher Variablen, die nicht als `${...}` im YAML stehen
-- Definition von Standardwerten
-- Laden von gespeicherten Werten aus `.env`
-- Zwischenspeicherung nicht gespeicherter Änderungen
-- Validierung vor dem Start
-- Bereitstellung effektiver Umgebungswerte für Compose
+### Gruppe 2: Einheitliches Auswahlmodell für Container und Ausgabe
 
-Folgerung:
+Bezug auf TODOs:
 
-- `ui/verwaltung/einstellungen_dialog.py` kennt nur noch die Objekt-API
-- `compose/podman.py` baut Startkonfigurationen auf Basis dieser Klasse
-- weitere Module sollen keine eigene `.env`-Logik mehr einführen
+- `Schnittstelle/verwaltung/compose_widget.py`: `einen Selektor definieren, der übergreifend eines aus entweder container oder volumen auswählt`
+- `Schnittstelle/verwaltung/compose_widget.py`: `Das Ausgabe widget braucht daher links von aktualisieren einen Knopf zum abwählen der aktuellen auswahl`
+- `Schnittstelle/verwaltung/compose_widget.py`: `da offenbar keine Volumenlog existent, beschränkt sich der Selektor auf container, die ausgabe ebenfalls`
 
-## Aktuelle Architektur
+Ziel:
 
-### 1. Verwaltungsseite
+- Die Ausgabe soll nicht mehr implizit nur vom aktuell markierten Container abhängen, sondern von einem klaren, zentralen Auswahlzustand für Container oder `keine Auswahl`.
 
-`ui/verwaltung_fenster.py` ist aktuell die Orchestrierung der Verwaltungsansicht.
+Umsetzungsplan:
 
-Verantwortlichkeiten:
+1. In `ComposeWidget` einen zentralen Auswahlzustand einführen, der genau einen Kontext abbildet:
+   - `container`
+   - `keine Auswahl`
+2. `ContainerBereich` auf ein semantisches Auswahl-Signal umstellen, statt nur Containernamen direkt weiterzureichen.
+3. `AusgabeBereich` um einen expliziten Button zum Aufheben der Auswahl erweitern; dieser sitzt links vom Aktualisieren-Button.
+4. Die Aktualisierungslogik so umbauen, dass sie abhängig vom Container-Auswahlzustand den passenden Inhalt lädt.
+5. Für den Zustand `keine Auswahl` einen klar definierten Standardinhalt festlegen, statt implizit auf den letzten Containerzustand zurückzufallen.
 
-- Aufbau des Splits für Container, Volumen und Ausgabe
-- periodische Statusaktualisierung
-- Öffnen des Einstellungsdialogs
-- Weitergabe der Env-Verwaltung
-- Vorvalidierung der Startkonfiguration
+Abnahmekriterien:
 
-### 2. Env-Verwaltung
+- Es gibt genau eine zentrale Auswahlquelle für die Ausgabe.
+- Die Ausgabe arbeitet ausschließlich mit Container-Auswahl oder `keine Auswahl`.
+- Die Auswahl kann im `AusgabeBereich` explizit zurückgesetzt werden.
+- Der angezeigte Inhalt folgt nachvollziehbar dem Container-Auswahlzustand statt versteckter Nebenwirkungen.
 
-`compose/env.py` enthält:
+### Gruppe 3: ComposeWidget entflechten und vereinfachen
 
-- `UmgebungsvariableDefinition`
-- `Umgebungsvariable`
-- `Umgebungsvariablen`
+Bezug auf TODOs:
 
-Diese Schicht ist bereits produktiv eingebunden und ersetzt die frühere verteilte Logik.
+- `Schnittstelle/verwaltung/compose_widget.py`: `vereinfachen`
 
-### 3. Podman-Startkonfiguration
+Ziel:
 
-`compose/podman.py` ist aktuell noch klein, aber fachlich korrekt geschnitten.
+- `ComposeWidget` soll wieder ein UI-Orchestrator sein und nicht gleichzeitig Layout, Selektionszustand, Statusabbildung, Podman-Aufrufe, Compose-Lifecycle und Fehlertextverwaltung bündeln.
 
-Der Einstiegspunkt ist:
+Umsetzungsplan:
 
-- `baue_startkonfiguration(dienst_ids, env_verwaltung)`
+1. Die Initialisierung in kleine Setup-Methoden aufteilen:
+   - Status laden
+   - Teilwidgets bauen
+   - Splitter zusammensetzen
+   - Signale verbinden
+   - Anfangszustand anwenden
+2. Podman-spezifische Befehlsausführung und Zeitlimits aus `ComposeWidget` in eine dedizierte Runtime-Hilfsschicht verschieben.
+3. Die Abbildung von Podman-Rohdaten auf UI-Status separat kapseln, damit Darstellung und Datenermittlung voneinander getrennt werden.
+4. Doppelte Signalverbindungen entfernen und nur noch einen klaren Aktualisierungsfluss pro Benutzeraktion zulassen.
+5. Gemeinsame Hilfsmethoden für Start, Neustart und Stop einführen, damit Persistenz, Fehlerbehandlung und UI-Rückmeldung nicht mehrfach implementiert werden.
+6. Das Einlesen der gespeicherten Dienstauswahl wieder aktivieren und an einen definierten Initialisierungsschritt binden.
+7. Den Dienstkatalog an eine zentrale Stelle ziehen, damit `DIENSTE` nicht in mehreren Modulen parallel gepflegt wird.
 
-Diese Funktion liefert:
+Abnahmekriterien:
 
-- die Compose-Dateien für die Auswahl
-- die effektiven Umgebungsvariablen
-
-Außerdem blockiert sie Starts, wenn Pflichtvariablen fehlen.
-
-## Bereits umgesetzt
-
-- Einstellungen-Button in der Aktionsleiste
-- modaler Dialog zur Bearbeitung der Umgebungsvariablen
-- automatische Ergänzung fehlender Variablen abhängig von der Dienstauswahl
-- Anzeige von Dienst, Variable, Wert und Status
-- Entwurfsspeicherung in `.env.draft.json`
-- Speichern nach `.env`
-- zentrale Definition und Validierung der Variablen in `compose/env.py`
-- Anbindung der Env-Klasse bis zur Startkonfiguration in `compose/podman.py`
+- `ComposeWidget` enthält überwiegend UI-Ablauf statt direkter Laufzeitdetails.
+- Podman-Befehle und Statusmapping sind separat testbar oder mindestens separat lesbar gekapselt.
+- Start-, Stop- und Neustartpfade teilen sich gemeinsame Logik.
+- Die gespeicherte Dienstauswahl wird beim Öffnen der Verwaltungsseite wieder korrekt angewendet.
 
 ## Offene Punkte
 
 ### Kurzfristig
 
-1. Die aktuelle Startlogik arbeitet noch mit `podman start` auf vorhandenen Containern.
-2. Der nächste Schritt ist die echte Compose-basierte Runtime:
-   - `compose up`
-   - `compose down`
-   - Übergabe der von `Umgebungsvariablen` gelieferten Werte
-3. Die Dienstauswahl selbst ist noch nicht persistent gespeichert.
-4. Das Ollama-Profil ist noch nicht in die Verwaltungsseite integriert.
+1. Web-Dienstseiten über einen zentralen Dienstkatalog statt über hartcodierte URLs aufbauen.
+2. Authentifizierung für eingebettete Web-Dienstseiten ergänzen.
+3. Einheitliches Auswahlmodell für Container, Volumen und Ausgabe definieren.
+4. `ComposeWidget` strukturell entflechten.
+5. Gespeicherte Dienstauswahl beim Start wieder in die UI laden.
 
 ### Mittelfristig
 
-1. `ui/haupt_fenster.py` auf strukturierte Navigation mit `page_id` umstellen.
-2. Laufende aktivierte Dienste als dynamische Einträge in `ui/vertikale_leiste.py` ergänzen.
-3. Dienstseiten persistent im zentralen `QStackedWidget` cachen.
-4. Web-Dienstseiten von `ui/web_fenster.py` aus in wiederverwendbare Dienstseiten überführen.
+1. Navigation von Indexen auf stabile `page_id`-Werte umstellen.
+2. Laufende oder aktivierte Dienste als dynamische Seiten ergänzen.
+3. Dienstmetadaten zentralisieren und in UI, Runtime und Webintegration gemeinsam verwenden.
+4. Zusätzliche Dienstseiten persistent im `QStackedWidget` halten.
 
 ### Langfristig
 
-1. echte `PodmanRuntime` als eigene Schicht aufbauen
-2. Podman-Installation prüfen und später aus der UI anstoßen
-3. Supabase-Integration aus dem Platzhalterzustand lösen
-4. Installationsstatus, Healthchecks und UI-Erreichbarkeit je Dienst ergänzen
-
-## Umsetzungspläne für vorhandene TODOs
-
-### 1. `Schnittstelle/web_widget.py`: Website-Authentifizierung einbauen
-
-Ziel:
-
-- Web-Dienstseiten sollen auch dann direkt in der Qt-Webansicht funktionieren, wenn der Dienst eine Anmeldung oder vorab gesetzte Session-Daten benötigt.
-
-Umsetzungsplan:
-
-1. Für Web-Dienste eine kleine Metadatenstruktur einführen, die URL, Port, optionalen Login-Typ und benötigte Variablen beschreibt.
-2. Die Zugangsdaten nicht im `QWebEngineView` hinterlegen, sondern aus der bestehenden Einstellungs- und Umgebungsvariablen-Schicht beziehen.
-3. In `ProgrammSeite` eine klar getrennte Auth-Schicht ergänzen:
-   - Basic-Auth für einfache Dienste
-   - Cookie- oder Token-Setzen für Web-UIs mit Session
-   - später optional Formular-Login für Sonderfälle
-4. Vor dem Laden der Zielseite zuerst die Authentifizierung ausführen und Fehlerzustände sichtbar an die UI zurückmelden.
-5. Für nicht konfigurierte Zugangsdaten einen kontrollierten Fallback ergänzen, damit die Seite nicht still scheitert.
-
-Abnahmekriterien:
-
-- Zugangsdaten kommen ausschließlich aus Konfiguration oder Einstellungen.
-- Eine fehlgeschlagene Anmeldung erzeugt eine sichtbare Fehlermeldung.
-- Die Webansicht bleibt wiederverwendbar und enthält keine dienstspezifisch hartcodierten Spezialfälle.
-
-### 2. `Schnittstelle/haupt_fenster.py`: Port aus dem Umgebungskontext auslesen
-
-Ziel:
-
-- Die Web-URL darf nicht mehr fest auf `5678` verdrahtet sein, sondern muss aus der aktiven Dienstkonfiguration ableitbar werden.
-
-Umsetzungsplan:
-
-1. Die Verantwortung für Host, Port und URL-Pfad aus `FensterLayout` herausziehen und in eine fachliche Dienstbeschreibung verlagern.
-2. Für `n8n` und spätere Web-Dienste definieren, welche Umgebungsvariable oder welcher Standardwert den Port liefert.
-3. Die effektive URL aus derselben Konfiguration ableiten, die auch für Compose-Start und Einstellungen verwendet wird.
-4. Beim Aufbau der `ProgrammSeite` die berechnete URL injizieren, statt sie per Stringverkettung lokal zu erzeugen.
-5. Für fehlende oder ungültige Portwerte eine validierte Fallback-Strategie ergänzen, inklusive Meldung in der Oberfläche.
-
-Abnahmekriterien:
-
-- Es gibt keinen hartcodierten Port mehr im Hauptfenster.
-- Änderungen an relevanten Umgebungsvariablen wirken sich auf die Web-URL aus.
-- Die URL-Auflösung ist für weitere Dienste wiederverwendbar.
-
-### 3. `Schnittstelle/verwaltung/compose_widget.py`: Widget vereinfachen
-
-Ziel:
-
-- `ComposeWidget` soll wieder klar lesbar werden und nur noch UI-Orchestrierung enthalten, nicht gleichzeitig Runtime-, Mapping- und Persistenzlogik.
-
-Umsetzungsplan:
-
-1. Die Initialisierung in kleine private Setup-Methoden aufteilen:
-   - Status laden
-   - Teilwidgets erzeugen
-   - Splitter aufbauen
-   - Signale verbinden
-   - Anfangszustand anwenden
-2. Laufzeitnahe Podman-Operationen in eine eigene Runtime-Hilfsschicht verschieben, damit `ComposeWidget` nicht selbst Befehle, Timeouts und Fehlertexte verwaltet.
-3. Die Statusabbildung von Podman-JSON auf Dienststatus in eine separate Funktion oder Klasse auslagern, damit Darstellung und Datenermittlung getrennt bleiben.
-4. Zustandsfelder wie ausgewählte Dienste, letzte Startkonfiguration, letzter Fehler und ausgewählter Container an einer Stelle zentral initialisieren.
-5. Doppelte Signalverbindungen und redundante Aktualisierungswege entfernen, damit jede Benutzeraktion nur noch einen klaren Fluss auslöst.
-6. Für Start, Neustart und Stop gemeinsame Hilfsmethoden einführen, damit Compose-Aufrufe, Persistenz und UI-Rückmeldungen nicht mehrfach implementiert werden.
-
-Abnahmekriterien:
-
-- `ComposeWidget` konzentriert sich auf UI-Ablauf und Delegation.
-- Podman-spezifische Details sind außerhalb des Widgets gekapselt.
-- Start-, Neustart- und Stop-Logik teilen sich gemeinsame Pfade statt duplizierten Code.
+1. Eine eigene `PodmanRuntime` als klare Schicht etablieren.
+2. Podman-Installation und Runtime-Verfügbarkeit aktiv prüfen.
+3. Dienstspezifische Erreichbarkeit, Healthchecks und Installationsstatus ergänzen.
+4. Supabase aus dem aktuellen Platzhalterzustand herausführen.
 
 ## Nächste konkrete Umsetzungsreihenfolge
 
-1. Compose-Start und Compose-Stop in `compose/podman.py` und `ui/verwaltung_fenster.py` umsetzen.
-2. Dienstauswahl und spätere Laufzeitoptionen persistent speichern.
-3. Service-Katalog als eigene fachliche Struktur einführen.
-4. `ui/haupt_fenster.py` und `ui/vertikale_leiste.py` auf dynamische Navigation umbauen.
-5. Persistente Dienstseiten für Web- und native UIs ergänzen.
+1. Zentralen Dienstkatalog einführen und daraus URL, Container-Aliase und Web-Metadaten ableiten.
+2. TODO-Gruppe 1 für Portauflösung und Web-Authentifizierung umsetzen.
+3. TODO-Gruppe 2 für das neue Auswahlmodell und den Ausgabe-Reset umsetzen.
+4. TODO-Gruppe 3 für die strukturelle Entflechtung von `ComposeWidget` umsetzen.
+5. Danach Navigation und Dienstseiten auf dynamische `page_id`-basierte Seiten erweitern.
 
 ## Kritische Punkte
 
-- Die Env-Verwaltung darf nicht wieder auf mehrere UI- oder Runtime-Dateien verteilt werden.
+- Die Env-Verwaltung darf nicht wieder auf mehrere Module verteilt werden.
+- Dienstmetadaten dürfen nicht dauerhaft doppelt in UI und Runtime gepflegt werden.
+- Vor der Volumen-Ausgabe muss fachlich klar sein, was bei einer Volumen-Auswahl überhaupt angezeigt werden soll.
 - Nicht gespeicherte Entwürfe dürfen den echten Compose-Start nicht unbemerkt verändern.
-- Die Navigation darf nicht indexbasiert bleiben, sobald dynamische Seiten hinzukommen.
-- Supabase ist weiterhin nur als Platzhalter vorhanden und blockiert einen vollständigen Stack-Aufbau.
+- Die Navigation darf nicht indexbasiert bleiben, sobald dynamische Dienstseiten hinzukommen.
 
 ## Ergebnis nach vollständiger Umsetzung
 
 Nach der vollständigen Umsetzung arbeitet die Oberfläche so:
 
-- links steht immer `Verwalter`
-- im `Verwalter` wählt der Nutzer Dienste und bearbeitet deren Umgebungsvariablen
-- die Startkonfiguration wird aus Dienstauswahl und `Umgebungsvariablen` gebaut
-- Podman startet und stoppt die gewählten Stacks über Compose
-- laufende aktivierte Dienste erscheinen zusätzlich in der Navigation
-- ein Wechsel zwischen Seiten zerstört die Dienst-UI nicht
+- Die Anwendung verwaltet Dienste, Compose-Konfiguration und Web-Dienstseiten aus einem gemeinsamen Dienstkatalog.
+- Die Verwaltungsseite zeigt Container, Volumen und Ausgabe weiterhin in einer festen, klar getrennten Dreiteilung.
+- Die Startkonfiguration wird aus Dienstauswahl und `Umgebungsvariablen` gebaut.
+- Podman startet und stoppt die gewählten Stacks über Compose.
+- Web-Dienstseiten verwenden die effektive Konfiguration und können bei Bedarf authentifiziert geladen werden.
+- Die Ausgabe folgt einem eindeutigen Auswahlmodell für Container, Volumen oder eine bewusst definierte Standardansicht.
+- Zusätzliche Dienstseiten können später ohne indexbasierte Sonderlogik in die Navigation aufgenommen werden.

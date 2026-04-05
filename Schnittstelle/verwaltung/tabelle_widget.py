@@ -15,25 +15,25 @@ from PyQt6.QtWidgets import (
 )
 
 class Tabelle(QTableWidget):
-    def __init__(self,start: int, parent = None, headerLabels: dict[str,QHeaderView.ResizeMode] = {}):
-        super().__init__(start,len(headerLabels),parent)
+    def __init__(self, start: int, parent = None, header_labels: dict[str,QHeaderView.ResizeMode] = {}):
+        super().__init__(start, len(header_labels), parent)
         
-        self.setHorizontalHeaderLabels(headerLabels.keys())
+        self.setHorizontalHeaderLabels(header_labels.keys())
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setAlternatingRowColors(True)
         
-        vHeader = self.verticalHeader()
-        hHeader = self.horizontalHeader()
+        v_header = self.verticalHeader()
+        h_header = self.horizontalHeader()
         
-        if vHeader: vHeader.setVisible(False)
-        if hHeader: 
-            for i,mode in enumerate(headerLabels.values()):
-                hHeader.setSectionResizeMode(i,mode)
+        if v_header: v_header.setVisible(False)
+        if h_header:
+            for i,mode in enumerate(header_labels.values()):
+                h_header.setSectionResizeMode(i,mode)
         # self.tabelle.currentCellChanged.connect(self._sende_aktuelle_auswahl)
     
-    def selektierteZeile(self) -> int:
+    def selektierte_zeile(self) -> int:
         model = self.selectionModel()
         reihen = model.selectedRows() if model else []
         return reihen[0].row() if reihen else -1

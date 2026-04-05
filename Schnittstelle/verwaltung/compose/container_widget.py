@@ -233,7 +233,7 @@ class ContainerBereich(QGroupBox):
 
     def _sende_aktuelle_auswahl(self, aktuelle_zeile: int | None = None, *_args) -> None:
         zeile = aktuelle_zeile
-        if zeile is None or zeile < 0: zeile = self.tabelle.selektierteZeile()
+        if zeile is None or zeile < 0: zeile = self.tabelle.selektierte_zeile()
         if zeile < 0:
             self.container_gewaehlt.emit(None, "Kein Dienst ausgewählt")
             return

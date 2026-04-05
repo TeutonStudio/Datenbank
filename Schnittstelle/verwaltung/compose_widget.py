@@ -28,6 +28,8 @@ DIENSTE = [
 
 # TODO vereinfachen
 # TODO einen Selektor definieren, der übergreifend eines aus entweder container oder volumen auswählt (oder nichts). Dieser Selektor definiert welches log im ausgabe dargestellt wird (bei nichts ist es das des gesamten container)
+# TODO Das Ausgabe widget braucht daher links von aktualisieren einen Knopf zum abwählen der aktuellen auswahl
+# TODO da offenbar keine Volumenlog existent, beschränkt sich der Selektor auf container, die ausgabe ebenfalls
 class ComposeWidget(QSplitter):
     def __init__(self,parent):
         super().__init__(Qt.Orientation.Vertical,parent)
