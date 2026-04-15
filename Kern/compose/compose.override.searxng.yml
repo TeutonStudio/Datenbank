@@ -7,6 +7,8 @@ services:
     restart: unless-stopped
     expose:
       - 8080/tcp
+    ports:
+      - 127.0.0.1:${SEARXNG_PRIVATE_PORT:-8081}:8080
     volumes:
       - ../searxng:/etc/searxng:Z
     environment:

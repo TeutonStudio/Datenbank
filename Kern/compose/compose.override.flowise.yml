@@ -10,6 +10,8 @@ services:
     restart: unless-stopped
     expose:
       - 3001/tcp
+    ports:
+      - 127.0.0.1:${FLOWISE_PRIVATE_PORT:-3001}:3001
     environment:
       - PORT=3001
       - FLOWISE_USERNAME=${FLOWISE_USERNAME}

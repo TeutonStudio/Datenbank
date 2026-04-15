@@ -10,5 +10,7 @@ services:
     restart: unless-stopped
     expose:
       - 8080/tcp
+    ports:
+      - 127.0.0.1:${WEBUI_PRIVATE_PORT:-8080}:8080
     volumes:
       - open_webui_storage:/app/backend/data
