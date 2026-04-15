@@ -19,6 +19,7 @@ DIENSTE = [
     DienstDefinition("searxng", "SearXNG", ("searxng",)),
     DienstDefinition("supabase", "Supabase Studio", ("studio", "supabase-studio")),
     DienstDefinition("ollama", "Ollama", ("ollama", "ollama-cpu", "ollama-gpu", "ollama-gpu-amd")),
+    DienstDefinition("immich", "Immich", ("immich-server",)),
 ]
 
 

@@ -4,7 +4,7 @@ from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QListWidget, QListWidgetItem
 
-ICON_PATH = "./ui/icon/"
+ICON_PATH = "./Schnittstelle/icon/"
 
 BREITE = { "nur_icon": 55, "mit_text": 200 }
 
@@ -55,7 +55,7 @@ class VertikalerEintrag(QListWidgetItem):
         if icon_str: self.icon_str = icon_str
         pfad = ""
         if os.path.exists(self.icon_str): pfad = self.icon_str
-        else: pfad = "./ui/icon/settings.svg"
+        else: pfad = "./Schnittstelle/icon/settings.svg"
         self.setIcon(QIcon(pfad))
         self.setSizeHint(QSize(40, 40))
 

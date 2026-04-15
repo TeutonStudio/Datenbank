@@ -71,3 +71,7 @@ services:
   ollama-gpu-amd:
     ports:
       - 127.0.0.1:11435:11434
+
+  immich-server:
+    ports:
+      - 127.0.0.1:${IMMICH_PRIVATE_PORT:-2283}:2283

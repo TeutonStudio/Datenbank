@@ -42,6 +42,16 @@ podman compose \
   up -d
 ```
 
+Für Immich werden Server, Machine Learning, Redis/Valkey und Postgres zusammen geladen:
+
+```sh
+podman compose \
+  -f compose/compose.yml \
+  -f compose/compose.override.immich.yml \
+  -f compose/compose.override.private.yml \
+  up -d
+```
+
 ## Hinweise
 
 - `compose.override.private.yml` und `compose.override.public.yml` sind alternative Overlays und sollten nicht gemeinsam geladen werden.

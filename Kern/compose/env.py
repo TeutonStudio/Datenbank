@@ -66,6 +66,7 @@ class Umgebungsvariablen:
         "searxng": ("compose.override.searxng.yml",),
         "supabase": ("compose.override.supabase.yml",),
         "ollama": ("compose.override.ollama.yml",),
+        "immich": ("compose.override.immich.yml",),
     }
 
     DIENST_ZUSAETZLICHE_DEFINITIONEN: dict[str, tuple[UmgebungsvariableDefinition, ...]] = {
@@ -124,6 +125,20 @@ class Umgebungsvariablen:
                 dienst_ids=("ollama",),
                 hat_standardwert=True,
                 standardwert=":8004",
+            ),
+        ),
+        "immich": (
+            UmgebungsvariableDefinition(
+                "IMMICH_HOSTNAME",
+                dienst_ids=("immich",),
+                hat_standardwert=True,
+                standardwert=":8009",
+            ),
+            UmgebungsvariableDefinition(
+                "IMMICH_PRIVATE_PORT",
+                dienst_ids=("immich",),
+                hat_standardwert=True,
+                standardwert="2283",
             ),
         ),
     }

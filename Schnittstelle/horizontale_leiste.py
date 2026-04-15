@@ -9,7 +9,7 @@ from PyQt6.QtGui import QIcon, QPixmap
 
 from typing import Callable
 
-from Schnittstelle.vertikale_leiste import VertikaleLeiste
+from Schnittstelle.vertikale_leiste import VertikaleLeiste, ICON_PATH
 
 
 class HorizontaleLeiste(QFrame):
@@ -38,11 +38,11 @@ class HorizontaleLeiste(QFrame):
         self.horizontalLayout.addStretch()
         
         self.title_icon.setText("")
-        self.title_icon.setPixmap(QPixmap("./ui/icon/Logo.png"))
+        self.title_icon.setPixmap(QPixmap(ICON_PATH+"Logo.png"))
         self.title_icon.setScaledContents(True)
         
         self.menu_btn.setText("")
-        self.menu_btn.setIcon(QIcon("./ui/icon/close.svg"))
+        self.menu_btn.setIcon(QIcon(ICON_PATH+"close.svg"))
         self.menu_btn.setIconSize(QSize(30, 30))
         self.menu_btn.setCheckable(True)
         self.menu_btn.setChecked(False)
@@ -53,7 +53,7 @@ class HorizontaleLeiste(QFrame):
         self.title_label.setText(titel)
 
     def button_icon_change(self, status):
-        pfad = "./ui/icon/" + ("open" if status else "close") + ".svg"
+        pfad = ICON_PATH + ("open" if status else "close") + ".svg"
         self.menu_btn.setIcon(QIcon(pfad))
 
     def init_single_slot(self, side_menu: VertikaleLeiste, setCurrentIndex: Callable[[int],None]):
