@@ -1,9 +1,11 @@
 import json
+import shlex
 import subprocess
 from typing import Any
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QSplitter
+from PyQt6.QtCore import QProcess, QProcessEnvironment, QTimer, Qt
+from PyQt6.QtGui import QTextCursor
+from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QSplitter, QVBoxLayout
 
 from Kern.compose.env import Umgebungsvariablen
 from Kern.podman import lade_startkonfiguration, speichere_ausgewaehlte_dienste, \
@@ -28,6 +30,174 @@ DIENSTE = [
     DienstDefinition("immich", "Immich", ("immich-server",)),
 ]
 
+
+class PodmanProzessDialog(QDialog):
+    def __init__(
+        self,
+        titel: str,
+        argumente: list[str],
+        arbeitsverzeichnis,
+        umgebung: dict[str, str],
+        *,
+        timeout: int,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._argumente = argumente
+        self._arbeitsverzeichnis = arbeitsverzeichnis
+        self._umgebung = umgebung
+        self._timeout = timeout
+        self._ausgabe: list[str] = []
+        self._abgeschlossen_callback = None
+        self._zeitlimit_erreicht = False
+        self._abgeschlossen = False
+
+        self.setWindowTitle(titel)
+        self.setWindowModality(Qt.WindowModality.WindowModal)
+        self.resize(900, 560)
+
+        layout = QVBoxLayout(self)
+        self.status_label = QLabel("Podman Compose wird gestartet ...", self)
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        self.ausgabe_feld = QPlainTextEdit(self)
+        self.ausgabe_feld.setReadOnly(True)
+        self.ausgabe_feld.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        layout.addWidget(self.ausgabe_feld)
+
+        aktionen = QHBoxLayout()
+        aktionen.addStretch()
+        self.abbrechen_button = QPushButton("Abbrechen", self)
+        self.abbrechen_button.clicked.connect(self._abbrechen)
+        self.schliessen_button = QPushButton("Schließen", self)
+        self.schliessen_button.setEnabled(False)
+        self.schliessen_button.clicked.connect(self.accept)
+        aktionen.addWidget(self.abbrechen_button)
+        aktionen.addWidget(self.schliessen_button)
+        layout.addLayout(aktionen)
+
+        self._prozess = QProcess(self)
+        self._prozess.setProgram("podman")
+        self._prozess.setArguments(argumente)
+        self._prozess.setWorkingDirectory(str(arbeitsverzeichnis))
+        self._prozess.setProcessEnvironment(self._prozessumgebung())
+        self._prozess.readyReadStandardOutput.connect(self._lese_stdout)
+        self._prozess.readyReadStandardError.connect(self._lese_stderr)
+        self._prozess.errorOccurred.connect(self._prozessfehler)
+        self._prozess.finished.connect(self._prozess_beendet)
+
+        self._timeout_timer = QTimer(self)
+        self._timeout_timer.setSingleShot(True)
+        self._timeout_timer.timeout.connect(self._zeitlimit_ueberschritten)
+
+    def setze_abgeschlossen_callback(self, callback) -> None:
+        self._abgeschlossen_callback = callback
+
+    def starten(self) -> None:
+        befehl = " ".join(shlex.quote(teil) for teil in ["podman", *self._argumente])
+        self._haenge_ausgabe_an(f"$ {befehl}\n")
+        self._prozess.start()
+        self._timeout_timer.start(self._timeout * 1000)
+
+    def _prozessumgebung(self) -> QProcessEnvironment:
+        umgebung = QProcessEnvironment.systemEnvironment()
+        for name, wert in self._umgebung.items():
+            umgebung.insert(name, wert)
+        return umgebung
+
+    def _lese_stdout(self) -> None:
+        self._haenge_ausgabe_an(
+            bytes(self._prozess.readAllStandardOutput()).decode(errors="replace")
+        )
+
+    def _lese_stderr(self) -> None:
+        self._haenge_ausgabe_an(
+            bytes(self._prozess.readAllStandardError()).decode(errors="replace")
+        )
+
+    def _haenge_ausgabe_an(self, text: str) -> None:
+        if not text:
+            return
+        self._ausgabe.append(text)
+        self.ausgabe_feld.moveCursor(QTextCursor.MoveOperation.End)
+        self.ausgabe_feld.insertPlainText(text)
+        self.ausgabe_feld.moveCursor(QTextCursor.MoveOperation.End)
+
+    def _prozessfehler(self, fehler: QProcess.ProcessError) -> None:
+        meldungen = {
+            QProcess.ProcessError.FailedToStart: "Podman konnte nicht gestartet werden.",
+            QProcess.ProcessError.Crashed: "Podman wurde unerwartet beendet.",
+            QProcess.ProcessError.Timedout: "Podman hat nicht rechtzeitig reagiert.",
+            QProcess.ProcessError.ReadError: "Podman-Ausgabe konnte nicht gelesen werden.",
+            QProcess.ProcessError.WriteError: "Podman-Eingabe konnte nicht geschrieben werden.",
+            QProcess.ProcessError.UnknownError: "Unbekannter Podman-Prozessfehler.",
+        }
+        self._haenge_ausgabe_an(f"\n{meldungen.get(fehler, 'Podman-Prozessfehler.')}\n")
+        if fehler == QProcess.ProcessError.FailedToStart:
+            QTimer.singleShot(
+                0,
+                lambda: self._prozess_beendet(
+                    -1,
+                    QProcess.ExitStatus.CrashExit,
+                ),
+            )
+
+    def _zeitlimit_ueberschritten(self) -> None:
+        if self._prozess.state() == QProcess.ProcessState.NotRunning:
+            return
+        self._zeitlimit_erreicht = True
+        self._haenge_ausgabe_an(
+            f"\nZeitlimit von {self._timeout} Sekunden überschritten. Podman wird beendet.\n"
+        )
+        self._prozess.kill()
+
+    def _abbrechen(self) -> None:
+        if self._prozess.state() == QProcess.ProcessState.NotRunning:
+            return
+        self._haenge_ausgabe_an("\nStart wurde abgebrochen. Podman wird beendet.\n")
+        self._prozess.kill()
+
+    def closeEvent(self, event) -> None:
+        if self._prozess.state() != QProcess.ProcessState.NotRunning:
+            self._haenge_ausgabe_an(
+                "\nDer Start läuft noch. Bitte erst abbrechen oder das Ende abwarten.\n"
+            )
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def _prozess_beendet(
+        self,
+        exit_code: int,
+        exit_status: QProcess.ExitStatus,
+    ) -> None:
+        if self._abgeschlossen:
+            return
+        self._abgeschlossen = True
+        self._timeout_timer.stop()
+        self._lese_stdout()
+        self._lese_stderr()
+
+        erfolgreich = (
+            not self._zeitlimit_erreicht
+            and exit_status == QProcess.ExitStatus.NormalExit
+            and exit_code == 0
+        )
+        if erfolgreich:
+            self.status_label.setText("Podman Compose wurde erfolgreich gestartet.")
+        else:
+            self.status_label.setText(
+                f"Podman Compose ist fehlgeschlagen. Exit-Code: {exit_code}"
+            )
+
+        self.abbrechen_button.setEnabled(False)
+        self.schliessen_button.setEnabled(True)
+        ausgabe = "".join(self._ausgabe).strip()
+        if self._abgeschlossen_callback is not None:
+            self._abgeschlossen_callback(erfolgreich, ausgabe)
+
+
 # TODO vereinfachen
 # TODO einen Selektor definieren, der übergreifend eines aus entweder container oder volumen auswählt (oder nichts). Dieser Selektor definiert welches log im ausgabe dargestellt wird (bei nichts ist es das des gesamten container)
 # TODO Das Ausgabe widget braucht daher links von aktualisieren einen Knopf zum abwählen der aktuellen auswahl
@@ -45,6 +215,8 @@ class ComposeWidget(QSplitter):
         self._ausgewaehlter_container: str | None = None
         self._ausgewaehlter_dienst = "Kein Dienst ausgewählt"
         self._letzter_status_fehler = ""
+        self._start_dialog: PodmanProzessDialog | None = None
+        self._prozess_dialoge: list[PodmanProzessDialog] = []
 
         self.container_bereich = ContainerBereich(DIENSTE, self)
         self.volumen_bereich = VolumenBereich(parent)
@@ -237,6 +409,11 @@ class ComposeWidget(QSplitter):
         )
 
     def _starte_dienste(self, dienst_ids: list[str]) -> None:
+        if self._start_dialog is not None and self._start_dialog.isVisible():
+            self._start_dialog.raise_()
+            self._start_dialog.activateWindow()
+            return
+
         try:
             startkonfiguration = baue_startkonfiguration(
                 dienst_ids,
@@ -246,26 +423,54 @@ class ComposeWidget(QSplitter):
             self.ausgabe_bereich.setze_ausgabe(str(fehler))
             return
 
-        ausgabe, fehler = self._fuehre_podman_kommando(
-            podman_compose_argumente(
-                startkonfiguration,
-                "up",
-                "-d",
-                "--remove-orphans",
-            ),
-            umgebung=prozessumgebung_fuer_konfiguration(startkonfiguration),
+        argumente = podman_compose_argumente(
+            startkonfiguration,
+            "up",
+            "-d",
+            "--remove-orphans",
+        )
+        dialog = PodmanProzessDialog(
+            "Compose-Stack starten",
+            argumente,
+            self._projekt_pfad,
+            prozessumgebung_fuer_konfiguration(startkonfiguration),
             timeout=600,
+            parent=self,
         )
-        if fehler:
-            self.ausgabe_bereich.setze_ausgabe(fehler)
-            return
-
-        speichere_startkonfiguration(self._compose_status_pfad, startkonfiguration)
-        self._letzte_startkonfiguration = startkonfiguration
-        self.aktualisiere_inhalt()
+        self._start_dialog = dialog
+        self._prozess_dialoge.append(dialog)
+        dialog.finished.connect(lambda _result: self._entferne_prozess_dialog(dialog))
+        self.container_bereich.aktions_button.setEnabled(False)
         self.ausgabe_bereich.setze_ausgabe(
-            ausgabe or f"Compose-Stack gestartet: {', '.join(startkonfiguration.dienst_ids)}"
+            f"Compose-Stack wird gestartet: {', '.join(startkonfiguration.dienst_ids)}"
         )
+
+        def abgeschlossen(erfolgreich: bool, ausgabe: str) -> None:
+            self.container_bereich.aktions_button.setEnabled(True)
+            if self._start_dialog is dialog:
+                self._start_dialog = None
+
+            if not erfolgreich:
+                self.ausgabe_bereich.setze_ausgabe(
+                    ausgabe or "Compose-Stack konnte nicht gestartet werden."
+                )
+                return
+
+            speichere_startkonfiguration(self._compose_status_pfad, startkonfiguration)
+            self._letzte_startkonfiguration = startkonfiguration
+            self.aktualisiere_inhalt()
+            self.ausgabe_bereich.setze_ausgabe(
+                ausgabe
+                or f"Compose-Stack gestartet: {', '.join(startkonfiguration.dienst_ids)}"
+            )
+
+        dialog.setze_abgeschlossen_callback(abgeschlossen)
+        dialog.starten()
+        dialog.open()
+
+    def _entferne_prozess_dialog(self, dialog: PodmanProzessDialog) -> None:
+        if dialog in self._prozess_dialoge:
+            self._prozess_dialoge.remove(dialog)
 
     def _neustarte_dienste(self, dienst_ids: list[str]) -> None:
         try:
