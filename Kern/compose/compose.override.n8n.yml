@@ -37,6 +37,8 @@ services:
     restart: unless-stopped
     expose:
       - 5678/tcp
+    ports:
+      - 127.0.0.1:5678:5678
     volumes:
       - n8n_storage:/home/node/.n8n
       - ../n8n/backup:/backup:Z

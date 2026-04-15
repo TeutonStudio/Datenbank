@@ -57,7 +57,7 @@ class PodmanProzessDialog(QDialog):
         self.resize(900, 560)
 
         layout = QVBoxLayout(self)
-        self.status_label = QLabel("Podman Compose wird gestartet ...", self)
+        self.status_label = QLabel("Podman Compose wird ausgeführt ...", self)
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
@@ -155,13 +155,13 @@ class PodmanProzessDialog(QDialog):
     def _abbrechen(self) -> None:
         if self._prozess.state() == QProcess.ProcessState.NotRunning:
             return
-        self._haenge_ausgabe_an("\nStart wurde abgebrochen. Podman wird beendet.\n")
+        self._haenge_ausgabe_an("\nVorgang wurde abgebrochen. Podman wird beendet.\n")
         self._prozess.kill()
 
     def closeEvent(self, event) -> None:
         if self._prozess.state() != QProcess.ProcessState.NotRunning:
             self._haenge_ausgabe_an(
-                "\nDer Start läuft noch. Bitte erst abbrechen oder das Ende abwarten.\n"
+                "\nDer Podman-Vorgang läuft noch. Bitte erst abbrechen oder das Ende abwarten.\n"
             )
             event.ignore()
             return
@@ -185,7 +185,7 @@ class PodmanProzessDialog(QDialog):
             and exit_code == 0
         )
         if erfolgreich:
-            self.status_label.setText("Podman Compose wurde erfolgreich gestartet.")
+            self.status_label.setText("Podman Compose wurde erfolgreich beendet.")
         else:
             self.status_label.setText(
                 f"Podman Compose ist fehlgeschlagen. Exit-Code: {exit_code}"
@@ -208,6 +208,9 @@ class ComposeWidget(QSplitter):
         self._projekt_pfad = parent.projekt_pfad
         self._umgebungsvariablen = umgebungsvariablen
         self._compose_status_pfad = self._projekt_pfad / ".compose.state.json"
+        alter_status_pfad = self._projekt_pfad / "Schnittstelle" / ".compose.state.json"
+        if not self._compose_status_pfad.exists() and alter_status_pfad.exists():
+            self._compose_status_pfad = alter_status_pfad
         self._letzte_startkonfiguration = lade_startkonfiguration(
             self._compose_status_pfad
         )
@@ -533,27 +536,53 @@ class ComposeWidget(QSplitter):
 
     def _stoppe_dienste(self) -> None:
         if self._letzte_startkonfiguration is not None:
-            ausgabe, fehler = self._fuehre_podman_kommando(
+            if self._start_dialog is not None and self._start_dialog.isVisible():
+                self._start_dialog.raise_()
+                self._start_dialog.activateWindow()
+                return
+
+            startkonfiguration = self._letzte_startkonfiguration
+            dialog = PodmanProzessDialog(
+                "Compose-Stack stoppen",
                 podman_compose_argumente(
-                    self._letzte_startkonfiguration,
+                    startkonfiguration,
                     "down",
                     "--remove-orphans",
                 ),
-                umgebung=prozessumgebung_fuer_konfiguration(
-                    self._letzte_startkonfiguration
-                ),
+                self._projekt_pfad,
+                prozessumgebung_fuer_konfiguration(startkonfiguration),
                 timeout=300,
+                parent=self,
             )
-            if fehler:
-                self.ausgabe_bereich.setze_ausgabe(fehler)
-                return
-
-            loesche_startkonfiguration(self._compose_status_pfad)
-            self._letzte_startkonfiguration = None
-            self.aktualisiere_inhalt()
+            self._start_dialog = dialog
+            self._prozess_dialoge.append(dialog)
+            dialog.finished.connect(lambda _result: self._entferne_prozess_dialog(dialog))
+            self.container_bereich.aktions_button.setEnabled(False)
             self.ausgabe_bereich.setze_ausgabe(
-                ausgabe or "Compose-Stack gestoppt und entfernt."
+                f"Compose-Stack wird gestoppt: {', '.join(startkonfiguration.dienst_ids)}"
             )
+
+            def abgeschlossen(erfolgreich: bool, ausgabe: str) -> None:
+                self.container_bereich.aktions_button.setEnabled(True)
+                if self._start_dialog is dialog:
+                    self._start_dialog = None
+
+                if not erfolgreich:
+                    self.ausgabe_bereich.setze_ausgabe(
+                        ausgabe or "Compose-Stack konnte nicht gestoppt werden."
+                    )
+                    return
+
+                loesche_startkonfiguration(self._compose_status_pfad)
+                self._letzte_startkonfiguration = None
+                self.aktualisiere_inhalt()
+                self.ausgabe_bereich.setze_ausgabe(
+                    ausgabe or "Compose-Stack gestoppt und entfernt."
+                )
+
+            dialog.setze_abgeschlossen_callback(abgeschlossen)
+            dialog.starten()
+            dialog.open()
             return
 
         bearbeitet, fehler_liste = self._stoppe_bekannte_container()

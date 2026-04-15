@@ -7,6 +7,18 @@ from Schnittstelle.verwaltung.verwaltung_fenster import VerwaltungFenster
 from Schnittstelle.web_widget import ProgrammSeite
 
 PROGRAMM_NAME = "N8N Verwalter"
+PROGRAMM_SEITEN = [
+    ("Verwaltung", None),
+    ("N8N", "http://localhost:5678"),
+    ("Open WebUI", "http://localhost:8080"),
+    ("Flowise", "http://localhost:3001"),
+    ("Langfuse", "http://localhost:3000"),
+    ("SearXNG", "http://localhost:8081"),
+    ("Neo4j", "http://localhost:7474"),
+    ("MinIO", "http://localhost:9011"),
+    ("Immich", "http://localhost:2283"),
+    ("Ollama", "http://localhost:11435"),
+]
 
 
 class HauptFenster(QMainWindow):
@@ -40,15 +52,15 @@ class FensterLayout(QGridLayout):
         self.title_frame = HorizontaleLeiste(parent)
         self.addWidget(self.title_frame, 0, 0, 1, 2)
 
-        # TODO PORT aus dem umgebungskontext auslesen
-        PORT = "5678"
-
-        self.navigationstitel = ["Verwaltung", "N8N"]
+        self.navigationstitel = [titel for titel, _url in PROGRAMM_SEITEN]
 
         self.stackedWidget = QStackedWidget(parent)
         self.stackedWidget.setObjectName("stackedWidget")
-        self.stackedWidget.addWidget(VerwaltungFenster(self.stackedWidget))
-        self.stackedWidget.addWidget(ProgrammSeite("http://localhost:"+PORT, self.stackedWidget))
+        for titel, url in PROGRAMM_SEITEN:
+            if url is None:
+                self.stackedWidget.addWidget(VerwaltungFenster(self.stackedWidget))
+                continue
+            self.stackedWidget.addWidget(ProgrammSeite(url, self.stackedWidget))
 
         self.addWidget(self.stackedWidget, 1, 1, 1, 1)
 

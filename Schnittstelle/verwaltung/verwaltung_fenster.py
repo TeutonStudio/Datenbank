@@ -26,8 +26,11 @@ DIENSTE = [
 class VerwaltungFenster(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self.projekt_pfad = Path(__file__).resolve().parent.parent
+        self.projekt_pfad = Path(__file__).resolve().parents[2]
         self._env_pfad = self.projekt_pfad / ".env"
+        alter_env_pfad = self.projekt_pfad / "Schnittstelle" / ".env"
+        if not self._env_pfad.exists() and alter_env_pfad.exists():
+            self._env_pfad = alter_env_pfad
         self._env_cache_pfad = self._env_pfad.with_suffix(".draft.json")
         self._umgebungsvariablen = Umgebungsvariablen(
             self._env_pfad,

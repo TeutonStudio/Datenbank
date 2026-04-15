@@ -9,6 +9,9 @@ services:
       - 7473/tcp
       - 7474/tcp
       - 7687/tcp
+    ports:
+      - 127.0.0.1:${NEO4J_BROWSER_PRIVATE_PORT:-7474}:7474
+      - 127.0.0.1:${NEO4J_BOLT_PRIVATE_PORT:-7687}:7687
     environment:
       - NEO4J_AUTH=${NEO4J_AUTH:-neo4j/your_password}
       - NEO4J_PLUGINS=["apoc"]

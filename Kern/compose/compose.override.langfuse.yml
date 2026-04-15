@@ -69,6 +69,8 @@ services:
       - clickhouse
     expose:
       - 3000/tcp
+    ports:
+      - 127.0.0.1:${LANGFUSE_PRIVATE_PORT:-3000}:3000
     environment:
       <<: *langfuse-worker-env
       NEXTAUTH_URL: ${LANGFUSE_PUBLIC_URL:-http://localhost:3000}

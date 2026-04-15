@@ -13,6 +13,8 @@ services:
       - immich-postgres
     expose:
       - 2283/tcp
+    ports:
+      - 127.0.0.1:${IMMICH_PRIVATE_PORT:-2283}:2283
     environment:
       TZ: ${TZ:-Etc/UTC}
       IMMICH_ENV: ${IMMICH_ENV:-production}
