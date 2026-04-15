@@ -5,6 +5,7 @@ from typing import Any
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QSplitter
 
+from Kern.compose.env import Umgebungsvariablen
 from Kern.podman import lade_startkonfiguration, speichere_ausgewaehlte_dienste, \
     startkonfigurationen_unterscheiden_sich, PodmanComposeStartKonfiguration, baue_startkonfiguration, \
     podman_compose_argumente, prozessumgebung_fuer_konfiguration, speichere_startkonfiguration, \
@@ -31,13 +32,18 @@ DIENSTE = [
 # TODO Das Ausgabe widget braucht daher links von aktualisieren einen Knopf zum abwählen der aktuellen auswahl
 # TODO da offenbar keine Volumenlog existent, beschränkt sich der Selektor auf container, die ausgabe ebenfalls
 class ComposeWidget(QSplitter):
-    def __init__(self,parent):
+    def __init__(self, parent, umgebungsvariablen: Umgebungsvariablen):
         super().__init__(Qt.Orientation.Vertical,parent)
         self._projekt_pfad = parent.projekt_pfad
+        self._umgebungsvariablen = umgebungsvariablen
         self._compose_status_pfad = self._projekt_pfad / ".compose.state.json"
         self._letzte_startkonfiguration = lade_startkonfiguration(
             self._compose_status_pfad
         )
+        self._container_status: dict[str, dict[str, object]] = {}
+        self._ausgewaehlter_container: str | None = None
+        self._ausgewaehlter_dienst = "Kein Dienst ausgewählt"
+        self._letzter_status_fehler = ""
 
         self.container_bereich = ContainerBereich(DIENSTE, self)
         self.volumen_bereich = VolumenBereich(parent)
@@ -182,11 +188,11 @@ class ComposeWidget(QSplitter):
         )
         if dialog.exec():
             self.ausgabe_bereich.setze_ausgabe(
-                f"Einstellungen gespeichert: {self._env_pfad.name}"
+                f"Einstellungen gespeichert: {self._umgebungsvariablen.env_pfad.name}"
             )
             self._aktualisiere_containerdarstellung()
 
-    def _lade_json_liste(self, basis_befehl: list[str]) -> tuple[list[dict[str, any]], str]:
+    def _lade_json_liste(self, basis_befehl: list[str]) -> tuple[list[dict[str, Any]], str]:
         daten, fehler = self._fuehre_podman_kommando([*basis_befehl, "--format", "json"])
         if daten:
             try:

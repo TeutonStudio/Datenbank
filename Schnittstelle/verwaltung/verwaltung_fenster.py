@@ -40,7 +40,7 @@ class VerwaltungFenster(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
 
-        self.compose = ComposeWidget(self)
+        self.compose = ComposeWidget(self, self._umgebungsvariablen)
         layout.addWidget(self.compose)
 
 
