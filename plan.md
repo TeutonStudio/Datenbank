@@ -605,6 +605,261 @@ Abnahmekriterien:
 - Dateisuche und Git-Status werden nicht durch Containerdaten gestoert.
 - Laufzeitdaten bleiben getrennt von Quellcode und Planung.
 
+## Zukunftsanpassungen
+
+### Haenger durch "Keine Rueckmeldung" vermeiden
+
+Analyse-Stand: 2026-04-16
+
+Die wahrscheinlichste Ursache fuer "Keine Rueckmeldung" ist nicht ein einzelner Absturz, sondern blockierende Arbeit im Qt-Hauptthread. Solange der Hauptthread in `subprocess.run(...)`, Dateizugriffen oder grossen Widget-Updates steckt, kann Qt keine Maus-, Tastatur-, Paint- oder Timer-Events verarbeiten. Windows/Linux markieren das Fenster dann als nicht antwortend.
+
+#### 1. Automatische Compose-Aktualisierung blockiert den Hauptthread
+
+Stellen:
+
+- `Schnittstelle/verwaltung/verwaltung_fenster.py:53` bis `Schnittstelle/verwaltung/verwaltung_fenster.py:58`
+- `Schnittstelle/verwaltung/compose_widget.py:113` bis `Schnittstelle/verwaltung/compose_widget.py:122`
+- `Schnittstelle/verwaltung/compose_widget.py:587` bis `Schnittstelle/verwaltung/compose_widget.py:615`
+
+Problem:
+
+- Alle 5 Sekunden ruft der `QTimer` direkt `ComposeWidget.aktualisiere_inhalt()` im UI-Thread auf.
+- Darin laufen Containerstatus, Volumenstatus und Logs nacheinander.
+- Jede Podman-Abfrage nutzt `subprocess.run(...)` synchron. Bei Timeout kann die UI pro Aktualisierung mehrere Sekunden bis deutlich ueber 10 Sekunden blockieren.
+- Das Flag `_aktualisierung_laeuft` verhindert nur Ueberlappungen, macht den laufenden Block aber nicht reaktionsfaehig.
+
+Geplante Loesung:
+
+1. Eine asynchrone Podman-Runtime einfuehren, zum Beispiel `Kern/runtime/podman_runtime.py`.
+2. Status-, Volumen- und Log-Abfragen ueber `QProcess` oder einen `QThread`/`QRunnable` ausfuehren.
+3. Ergebnisse nur per Signal in den UI-Thread zurueckgeben.
+4. Waehrend einer laufenden Aktualisierung neue Timer-Ticks zusammenfassen statt sofort zu starten.
+5. Einen sichtbaren Status wie "Aktualisierung laeuft ..." setzen, aber Buttons und Navigation bedienbar lassen.
+
+#### 2. JSON-Fallback verdoppelt blockierende Podman-Aufrufe
+
+Stellen:
+
+- `Schnittstelle/verwaltung/compose_widget.py:242` bis `Schnittstelle/verwaltung/compose_widget.py:278`
+- Aufgerufen aus `Schnittstelle/verwaltung/compose_widget.py:124` bis `Schnittstelle/verwaltung/compose_widget.py:139`
+
+Problem:
+
+- `_lade_json_liste(...)` probiert zuerst `--format json`.
+- Wenn die Ausgabe leer oder nicht parsebar ist, wird direkt ein zweiter Podman-Aufruf mit `--format "{{json .}}"` gestartet.
+- Container- und Volumenaktualisierung koennen dadurch jeweils zwei blockierende Prozesse starten.
+- Im Fehlerfall wird der Hauptthread nicht nur einmal, sondern wiederholt bis zum Timeout blockiert.
+
+Geplante Loesung:
+
+1. Podman-Formatfaehigkeit einmalig beim Start der Runtime ermitteln und cachen.
+2. Danach pro Aktualisierung nur noch ein bekannt funktionierendes Format nutzen.
+3. Fallbacks nur in einem Hintergrundprozess ausfuehren.
+4. Parserfehler in der UI anzeigen, ohne sofort denselben blockierenden Aufruf zu wiederholen.
+
+#### 3. Log-Aktualisierung blockiert bei Timer und Containerauswahl
+
+Stellen:
+
+- `Schnittstelle/verwaltung/compose_widget.py:151` bis `Schnittstelle/verwaltung/compose_widget.py:171`
+- `Schnittstelle/verwaltung/compose_widget.py:173` bis `Schnittstelle/verwaltung/compose_widget.py:180`
+- `Schnittstelle/verwaltung/compose/ausgabe_widget.py:54` bis `Schnittstelle/verwaltung/compose/ausgabe_widget.py:55`
+
+Problem:
+
+- `podman logs --tail 200 ...` laeuft synchron im UI-Thread.
+- Die Methode wird durch den 5-Sekunden-Timer, durch den Aktualisieren-Button und durch Tabellen-Auswahlwechsel ausgeloest.
+- `setPlainText(...)` ersetzt den kompletten Logtext jedes Mal neu. Bei groesseren Ausgaben oder haeufigen Auswahlwechseln kann auch das spuerbar blockieren.
+
+Geplante Loesung:
+
+1. Log-Abfragen in die asynchrone Runtime verschieben.
+2. Auswahlwechsel entprellen, zum Beispiel mit einem kurzen Single-Shot-Timer von 150 bis 300 ms.
+3. Logs nur fuer die aktuell sichtbare und zuletzt angeforderte Auswahl anwenden; veraltete Worker-Ergebnisse verwerfen.
+4. Fuer grosse Logs `QPlainTextEdit.setMaximumBlockCount(...)` verwenden und nur geaenderte Ausgabe anhaengen, statt immer den kompletten Inhalt zu ersetzen.
+
+#### 4. Tabellen-Selektion kann indirekt Podman-Abfragen ausloesen
+
+Stellen:
+
+- `Schnittstelle/verwaltung/compose/container_widget.py:71`
+- `Schnittstelle/verwaltung/compose/container_widget.py:221` bis `Schnittstelle/verwaltung/compose/container_widget.py:239`
+- `Schnittstelle/verwaltung/compose_widget.py:173` bis `Schnittstelle/verwaltung/compose_widget.py:180`
+
+Problem:
+
+- `currentCellChanged` sendet sofort die aktuelle Auswahl.
+- Die Auswahl landet in `_setze_ausgewaehlten_container(...)`, das direkt `_aktualisiere_logs()` ausfuehrt.
+- Damit kann schon ein Klick oder eine programmgesteuerte Tabellenaktualisierung eine blockierende Podman-Logabfrage starten.
+
+Geplante Loesung:
+
+1. Selektion und Logabruf entkoppeln.
+2. `ContainerBereich` soll nur den Auswahlzustand melden.
+3. `ComposeWidget` plant den Logabruf entprellt und asynchron.
+4. Waehrend `setze_status(...)` laeuft, Auswahl-Signale blockieren oder nach der Aktualisierung nur einmal gesammelt senden.
+
+#### 5. Stoppen bekannter Container laeuft seriell im UI-Thread
+
+Stellen:
+
+- `Schnittstelle/verwaltung/compose_widget.py:486` bis `Schnittstelle/verwaltung/compose_widget.py:530`
+- `Schnittstelle/verwaltung/compose_widget.py:524`
+
+Problem:
+
+- Wenn keine letzte Compose-Startkonfiguration vorhanden ist, stoppt `_stoppe_bekannte_container(...)` bekannte Container einzeln.
+- Jeder Container nutzt einen synchronen Podman-Aufruf mit bis zu 120 Sekunden Timeout.
+- Bei mehreren haengenden Containern kann die UI minutenlang nicht reagieren.
+
+Geplante Loesung:
+
+1. Stop-/Remove-Aktionen nie ueber `subprocess.run(...)` im UI-Thread ausfuehren.
+2. Bekannte Container in einem einzigen Podman-Befehl buendeln, zum Beispiel `podman stop <container...>`, sofern fachlich passend.
+3. Alternativ die vorhandenen `PodmanProzessDialog`-Mechanismen mit `QProcess` fuer die komplette Stop-Kette nutzen.
+4. Fortschritt pro Container im Dialog anzeigen und Abbrechen weiter erlauben.
+
+#### 6. Abschluss-Callbacks starten wieder synchrone Refreshes
+
+Stellen:
+
+- `Schnittstelle/verwaltung/compose_widget.py:333` bis `Schnittstelle/verwaltung/compose_widget.py:347`
+- `Schnittstelle/verwaltung/compose_widget.py:412` bis `Schnittstelle/verwaltung/compose_widget.py:426`
+- `Schnittstelle/verwaltung/compose_widget.py:463` bis `Schnittstelle/verwaltung/compose_widget.py:477`
+- `Schnittstelle/verwaltung/ollama_widget.py:116` bis `Schnittstelle/verwaltung/ollama_widget.py:126`
+
+Problem:
+
+- Die langen Start-/Stop-/Pull-Prozesse selbst laufen ueber `QProcess` und sind grundsaetzlich asynchron.
+- Direkt nach Prozessende rufen die Callbacks aber wieder synchrone Aktualisierungen auf:
+  - `self.aktualisiere_inhalt()` fuer Compose.
+  - `self.aktualisiere_modelle()` fuer Ollama.
+- Dadurch kann die UI genau nach dem Schliessen oder Fertigwerden des Dialogs erneut haengen.
+
+Geplante Loesung:
+
+1. Nach Prozessende nur den Zielzustand setzen und einen asynchronen Refresh anfordern.
+2. Persistenzschritte kurz halten und danach `RuntimeRefreshWorker` starten.
+3. Buttons erst nach dem Worker-Ergebnis final freigeben oder mit Zwischenstatus anzeigen.
+4. Fuer Ollama nach Pull-Ende dieselbe asynchrone Modelllisten-Aktualisierung wie im Timer nutzen.
+
+#### 7. Ollama-Seite blockiert beim Erzeugen und alle 5 Sekunden
+
+Stellen:
+
+- `Schnittstelle/haupt_fenster.py:59` bis `Schnittstelle/haupt_fenster.py:68`
+- `Schnittstelle/verwaltung/ollama_widget.py:67` bis `Schnittstelle/verwaltung/ollama_widget.py:78`
+- `Schnittstelle/verwaltung/ollama_widget.py:171` bis `Schnittstelle/verwaltung/ollama_widget.py:197`
+
+Problem:
+
+- `FensterLayout` erzeugt alle Seiten sofort beim Programmstart, auch die Ollama-Seite.
+- `OllamaWidget.__init__` ruft direkt `aktualisiere_modelle()` auf.
+- Diese Methode nutzt synchron `podman exec ollama ollama list` mit 10 Sekunden Timeout.
+- Zusaetzlich laeuft ein eigener 5-Sekunden-Timer, auch wenn die Ollama-Seite nicht sichtbar ist.
+
+Geplante Loesung:
+
+1. Seiten lazy erzeugen: Widgets erst beim ersten Navigieren anlegen.
+2. Ollama-Modellliste nur aktualisieren, wenn die Ollama-Seite sichtbar ist.
+3. Die Modellabfrage asynchron ausfuehren und Timer-Ticks zusammenfassen.
+4. Beim Programmstart keine Podman-Exec-Abfrage im Konstruktor ausfuehren.
+
+#### 8. Prozessdialoge koennen durch sehr viel Ausgabe selbst ruckeln
+
+Stellen:
+
+- `Schnittstelle/consolen_dialog.py:99` bis `Schnittstelle/consolen_dialog.py:115`
+- `Schnittstelle/consolen_dialog.py:275` bis `Schnittstelle/consolen_dialog.py:291`
+
+Problem:
+
+- `QProcess` ist hier richtig asynchron, aber jede stdout-/stderr-Meldung wird sofort in `QPlainTextEdit` geschrieben.
+- Bei Pulls, Downloads oder Compose-Ausgaben mit vielen Fortschrittszeilen kann das sehr viele UI-Updates pro Sekunde erzeugen.
+- `_ausgabe` waechst unbegrenzt im Speicher.
+- `\r`-Fortschrittsausgaben koennen das Textfeld stark aufblasen.
+
+Geplante Loesung:
+
+1. Ausgaben im Dialog puffern und nur per kurzem UI-Timer, zum Beispiel alle 50 bis 100 ms, in das Textfeld schreiben.
+2. `QPlainTextEdit.setMaximumBlockCount(...)` setzen, waehrend die vollstaendige Roh-Ausgabe optional in einer begrenzten Datei oder strukturiertem Puffer landet.
+3. `\r`-basierte Fortschrittsausgaben normalisieren.
+4. Die bereits geplante Status-Tabelle fuer Compose/Ollama-Ausgaben nutzen, damit Fortschrittsupdates Zeilen aktualisieren statt immer neue Textzeilen einzufuegen.
+
+#### 9. Env- und Startkonfigurationslogik liest Dateien synchron im UI-Pfad
+
+Stellen:
+
+- `Schnittstelle/verwaltung/compose_widget.py:214` bis `Schnittstelle/verwaltung/compose_widget.py:227`
+- `Schnittstelle/verwaltung/compose_widget.py:302` bis `Schnittstelle/verwaltung/compose_widget.py:316`
+- `Schnittstelle/verwaltung/compose_widget.py:366` bis `Schnittstelle/verwaltung/compose_widget.py:399`
+- `Kern/compose/env.py:335` bis `Kern/compose/env.py:386`
+- `Kern/compose/env.py:477` bis `Kern/compose/env.py:515`
+- `Kern/compose/env.py:600` bis `Kern/compose/env.py:675`
+- `Kern/podman.py:202` bis `Kern/podman.py:217`
+- `Kern/podman.py:234` bis `Kern/podman.py:250`
+
+Problem:
+
+- Compose-Dateien, `.env`, `.env.draft.json` und `.compose.state.json` werden synchron gelesen oder geschrieben.
+- Normalerweise ist das schnell, aber bei blockierender Platte, Netzwerkpfad, defekten Berechtigungen oder grossen Dateien haengt auch hier der UI-Thread.
+- Besonders kritisch ist `_konfiguration_ist_geaendert()`, weil es waehrend der Statusdarstellung laufen kann.
+
+Geplante Loesung:
+
+1. Env-Definitionen und geladene Env-Werte cachen und nur bei Dateiaenderungen neu laden.
+2. `.compose.state.json` klein halten und atomar schreiben.
+3. Startkonfigurationen vor UI-Aktionen vorberechnen oder in einem Worker bauen.
+4. Fehler und Timeouts aus Dateizugriffen sichtbar melden, statt die UI warten zu lassen.
+5. Langfristig Runtime-Status und Persistenz in eine Fachschicht verschieben, die dem UI nur fertige Snapshots liefert.
+
+#### 10. Einstellungen-Dialog speichert und baut die Tabelle bei jeder Aenderung neu
+
+Stellen:
+
+- `Schnittstelle/verwaltung/einstellungen_dialog.py:48` bis `Schnittstelle/verwaltung/einstellungen_dialog.py:50`
+- `Schnittstelle/verwaltung/einstellungen_dialog.py:130` bis `Schnittstelle/verwaltung/einstellungen_dialog.py:140`
+- `Schnittstelle/verwaltung/einstellungen_dialog.py:303` bis `Schnittstelle/verwaltung/einstellungen_dialog.py:315`
+- `Schnittstelle/verwaltung/einstellungen_dialog.py:165` bis `Schnittstelle/verwaltung/einstellungen_dialog.py:215`
+- `Schnittstelle/verwaltung/einstellungen_dialog.py:481` bis `Schnittstelle/verwaltung/einstellungen_dialog.py:501`
+- `Kern/compose/env.py:637` bis `Kern/compose/env.py:675`
+
+Problem:
+
+- Beim Oeffnen werden Definitionen und Variablen synchron geladen.
+- Bei `itemChanged` wird die komplette Tabelle rekonstruiert und der Entwurf direkt synchron geschrieben.
+- Bei laengerer Variablenliste oder langsamer Datei kann schon Tippen kurzzeitig blockieren.
+
+Geplante Loesung:
+
+1. Entwurfsspeicherung entprellen, zum Beispiel 500 ms nach der letzten Aenderung.
+2. Beim Editieren nur die betroffene Zeile aktualisieren, nicht die komplette Tabelle neu aufbauen.
+3. Datei-Schreibfehler im Dialog anzeigen und Speichern wiederholbar machen.
+4. Definitionen beim Oeffnen vorladen und danach aus dem Cache verwenden.
+
+#### 11. Allgemeine UI-Strategie gegen "Keine Rueckmeldung"
+
+Geplante Querschnittsanpassungen:
+
+1. Keine externen Prozesse mehr mit `subprocess.run(...)` im UI-Thread starten.
+2. Fuer kurze Podman-Abfragen eine gemeinsame asynchrone API einfuehren:
+   - `liste_container()`
+   - `liste_volumen()`
+   - `lade_logs(container)`
+   - `liste_ollama_modelle()`
+   - `stoppe_container(...)`
+3. Fuer lange Aktionen weiter Prozessdialoge verwenden, aber UI-Ausgabe drosseln.
+4. Alle automatischen Timer pausieren, wenn die zugehoerige Seite nicht sichtbar ist.
+5. Timer-Ticks nie stapeln; bei laufendem Worker nur einen `refresh_angefordert`-Merker setzen.
+6. Ergebnisse mit einer Anfrage-ID versehen, damit alte Worker-Antworten keine neue UI-Auswahl ueberschreiben.
+7. Fuer jede blockierende Stelle einen manuellen Test ergaenzen:
+   - Podman nicht installiert.
+   - Podman-Daemon reagiert nicht.
+   - Container haengt beim Stoppen.
+   - Logausgabe ist sehr gross.
+   - Ollama-Container existiert nicht.
+   - `.env` oder `.compose.state.json` ist nicht lesbar.
+
 ## Zukunftsplanung
 
 ### Synapse und Matrix implementieren

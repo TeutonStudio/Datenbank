@@ -183,6 +183,12 @@ class Umgebungsvariablen:
                 standardwert="8011",
             ),
             UmgebungsvariableDefinition(
+                "MATRIX_ELEMENT_INTERNAL_PORT",
+                dienst_ids=("matrix-synapse",),
+                hat_standardwert=True,
+                standardwert="8080",
+            ),
+            UmgebungsvariableDefinition(
                 "MATRIX_PROXY_PRIVATE_PORT",
                 dienst_ids=("matrix-synapse",),
                 hat_standardwert=True,
@@ -225,6 +231,12 @@ class Umgebungsvariablen:
                 dienst_ids=("matrix-element",),
                 hat_standardwert=True,
                 standardwert="8011",
+            ),
+            UmgebungsvariableDefinition(
+                "MATRIX_ELEMENT_INTERNAL_PORT",
+                dienst_ids=("matrix-element",),
+                hat_standardwert=True,
+                standardwert="8080",
             ),
             UmgebungsvariableDefinition(
                 "MATRIX_PROXY_PRIVATE_PORT",

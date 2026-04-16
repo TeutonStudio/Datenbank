@@ -6,8 +6,10 @@ services:
     container_name: matrix-element
     restart: unless-stopped
     expose:
-      - 80/tcp
+      - 8080/tcp
     ports:
-      - 127.0.0.1:${MATRIX_ELEMENT_PRIVATE_PORT:-8011}:80
+      - ${MATRIX_ELEMENT_PRIVATE_PORT:-8011}:8080
+    environment:
+      ELEMENT_WEB_PORT: ${MATRIX_ELEMENT_INTERNAL_PORT:-8080}
     volumes:
       - ../matrix/element/config.json:/app/config.json:ro,Z
