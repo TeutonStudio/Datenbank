@@ -8,10 +8,19 @@ from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QSplitter, QVBoxLayout
 
 from Kern.compose.env import Umgebungsvariablen
-from Kern.podman import lade_startkonfiguration, speichere_ausgewaehlte_dienste, \
-    startkonfigurationen_unterscheiden_sich, PodmanComposeStartKonfiguration, baue_startkonfiguration, \
-    podman_compose_argumente, prozessumgebung_fuer_konfiguration, speichere_startkonfiguration, \
-    loesche_startkonfiguration
+from Kern.podman import (
+    PodmanComposeStartKonfiguration,
+    PROJEKT_NAME,
+    baue_startkonfiguration,
+    lade_ausgewaehlte_dienste,
+    lade_startkonfiguration,
+    loesche_startkonfiguration,
+    podman_compose_argumente,
+    prozessumgebung_fuer_konfiguration,
+    speichere_ausgewaehlte_dienste,
+    speichere_startkonfiguration,
+    startkonfigurationen_unterscheiden_sich,
+)
 from Schnittstelle.verwaltung.compose.ausgabe_widget import AusgabeBereich
 from Schnittstelle.verwaltung.compose.container_widget import ContainerBereich, DienstDefinition
 from Schnittstelle.verwaltung.compose.volumen_widget import VolumenBereich
@@ -389,6 +398,9 @@ class ComposeWidget(QSplitter):
         self._letzte_startkonfiguration = lade_startkonfiguration(
             self._compose_status_pfad
         )
+        self._letzte_dienstauswahl = lade_ausgewaehlte_dienste(
+            self._compose_status_pfad
+        )
         self._container_status: dict[str, dict[str, object]] = {}
         self._ausgewaehlter_container: str | None = None
         self._ausgewaehlter_dienst = "Kein Dienst ausgewählt"
@@ -400,11 +412,18 @@ class ComposeWidget(QSplitter):
         self.volumen_bereich = VolumenBereich(parent)
         self.ausgabe_bereich = AusgabeBereich(parent)
 
-        # if self._letzte_dienstauswahl is not None:
-        #     self.container_bereich.setze_auswahl(
-        #         self._letzte_dienstauswahl,
-        #         als_manuelle_auswahl=True,
-        #     )
+        if self._letzte_dienstauswahl is not None:
+            self.container_bereich.setze_auswahl(
+                self._letzte_dienstauswahl,
+                als_manuelle_auswahl=True,
+            )
+            self._letzte_dienstauswahl = tuple(
+                self.container_bereich.ausgewaehlte_dienst_ids()
+            )
+            speichere_ausgewaehlte_dienste(
+                self._compose_status_pfad,
+                self._letzte_dienstauswahl,
+            )
 
         unterer_splitter = QSplitter(Qt.Orientation.Horizontal, self)
         unterer_splitter.addWidget(self.volumen_bereich)
@@ -441,7 +460,14 @@ class ComposeWidget(QSplitter):
         self._aktualisiere_containerdarstellung()
 
     def _aktualisiere_volumen(self) -> None:
-        volumen_rohdaten, fehler = self._lade_json_liste(["volume", "ls"])
+        volumen_rohdaten, fehler = self._lade_json_liste(
+            [
+                "volume",
+                "ls",
+                "--filter",
+                f"label=com.docker.compose.project={PROJEKT_NAME}",
+            ]
+        )
         volumen_liste = []
         for volumen in volumen_rohdaten:
             volumen_liste.append(

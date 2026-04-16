@@ -58,7 +58,7 @@ class VolumenBereich(QGroupBox):
         self.tabelle.setRowCount(max(1, len(volumen_liste)))
 
         if not volumen_liste:
-            self.tabelle.setItem(0, 0, QTableWidgetItem("Keine Podman-Volumen gefunden"))
+            self.tabelle.setItem(0, 0, QTableWidgetItem("Keine Projekt-Volumen gefunden"))
             self.tabelle.setItem(0, 1, QTableWidgetItem(""))
             self.tabelle.setItem(0, 2, QTableWidgetItem(""))
             return

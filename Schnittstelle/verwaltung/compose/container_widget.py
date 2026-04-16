@@ -60,8 +60,8 @@ class ContainerBereich(QGroupBox):
         layout.addLayout(kopfzeile)
 
         self.tabelle = Tabelle(len(dienste),self,{
-            "Dienst": QHeaderView.ResizeMode.Stretch, 
             "Aktiv": QHeaderView.ResizeMode.ResizeToContents, 
+            "Dienst": QHeaderView.ResizeMode.Stretch, 
             "Container": QHeaderView.ResizeMode.Stretch, 
             "Status": QHeaderView.ResizeMode.ResizeToContents,
         })
@@ -86,7 +86,7 @@ class ContainerBereich(QGroupBox):
         for zeile, dienst in enumerate(self._dienste):
             dienst_item = QTableWidgetItem(dienst.titel)
             dienst_item.setData(Qt.ItemDataRole.UserRole, dienst.dienst_id)
-            self.tabelle.setItem(zeile, 0, dienst_item)
+            self.tabelle.setItem(zeile, 1, dienst_item)
 
             checkbox = QCheckBox(self)
             checkbox.setChecked(self._auswahl[dienst.dienst_id])
@@ -99,7 +99,7 @@ class ContainerBereich(QGroupBox):
             checkbox_layout.setContentsMargins(0, 0, 0, 0)
             checkbox_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             checkbox_layout.addWidget(checkbox)
-            self.tabelle.setCellWidget(zeile, 1, checkbox_widget)
+            self.tabelle.setCellWidget(zeile, 0, checkbox_widget)
             self._checkboxen[dienst.dienst_id] = checkbox
 
             self.tabelle.setItem(zeile, 2, QTableWidgetItem("-"))
@@ -155,7 +155,7 @@ class ContainerBereich(QGroupBox):
 
     def _zeile_fuer_dienst(self, dienst_id: str) -> int:
         for zeile in range(self.tabelle.rowCount()):
-            item = self.tabelle.item(zeile, 0)
+            item = self.tabelle.item(zeile, 1)
             if item and item.data(Qt.ItemDataRole.UserRole) == dienst_id:
                 return zeile
         return -1
@@ -238,7 +238,7 @@ class ContainerBereich(QGroupBox):
             self.container_gewaehlt.emit(None, "Kein Dienst ausgewählt")
             return
 
-        item = self.tabelle.item(zeile, 0)
+        item = self.tabelle.item(zeile, 1)
         if item is None:
             self.container_gewaehlt.emit(None, "Kein Dienst ausgewählt")
             return
