@@ -1,0 +1,14 @@
+# Internal Matrix reverse proxy for Element and Synapse paths.
+
+services:
+  matrix-proxy:
+    image: docker.io/library/caddy:2-alpine
+    container_name: matrix-proxy
+    restart: unless-stopped
+    network_mode: service:matrix-tailscale
+    depends_on:
+      - matrix-tailscale
+      - matrix-synapse
+      - matrix-element
+    volumes:
+      - ../matrix/proxy/Caddyfile:/etc/caddy/Caddyfile:ro,Z

@@ -1,0 +1,13 @@
+# Element Web client for the private Matrix server.
+
+services:
+  matrix-element:
+    image: vectorim/element-web:${MATRIX_ELEMENT_VERSION:-latest}
+    container_name: matrix-element
+    restart: unless-stopped
+    expose:
+      - 80/tcp
+    ports:
+      - 127.0.0.1:${MATRIX_ELEMENT_PRIVATE_PORT:-8011}:80
+    volumes:
+      - ../matrix/element/config.json:/app/config.json:ro,Z

@@ -1,0 +1,28 @@
+# PostgreSQL backend for Matrix Synapse.
+
+volumes:
+  matrix_postgres_storage:
+
+services:
+  matrix-postgres:
+    image: postgres:${MATRIX_POSTGRES_VERSION:-16}
+    container_name: matrix-postgres
+    restart: unless-stopped
+    shm_size: 128mb
+    expose:
+      - 5432/tcp
+    environment:
+      POSTGRES_DB: ${MATRIX_POSTGRES_DB:-synapse}
+      POSTGRES_USER: ${MATRIX_POSTGRES_USER:-synapse}
+      POSTGRES_PASSWORD: ${MATRIX_POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C
+    volumes:
+      - matrix_postgres_storage:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${MATRIX_POSTGRES_USER:-synapse} -d ${MATRIX_POSTGRES_DB:-synapse}
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s

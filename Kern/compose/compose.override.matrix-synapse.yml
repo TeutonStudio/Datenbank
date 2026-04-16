@@ -1,0 +1,103 @@
+# Matrix Synapse homeserver.
+
+volumes:
+  matrix_synapse_storage:
+
+services:
+  matrix-synapse:
+    image: matrixdotorg/synapse:${MATRIX_SYNAPSE_VERSION:-latest}
+    container_name: matrix-synapse
+    restart: unless-stopped
+    depends_on:
+      - matrix-postgres
+    expose:
+      - 8008/tcp
+    ports:
+      - 127.0.0.1:${MATRIX_SYNAPSE_PRIVATE_PORT:-8010}:8008
+    environment:
+      MATRIX_SERVER_NAME: ${MATRIX_SERVER_NAME:-selatrix.huchen-pirate.ts.net}
+      MATRIX_PUBLIC_BASEURL: ${MATRIX_PUBLIC_BASEURL:-https://selatrix.huchen-pirate.ts.net}
+      MATRIX_SYNAPSE_REPORT_STATS: ${MATRIX_SYNAPSE_REPORT_STATS:-no}
+      MATRIX_POSTGRES_DB: ${MATRIX_POSTGRES_DB:-synapse}
+      MATRIX_POSTGRES_USER: ${MATRIX_POSTGRES_USER:-synapse}
+      MATRIX_POSTGRES_PASSWORD: ${MATRIX_POSTGRES_PASSWORD}
+      MATRIX_REGISTRATION_SHARED_SECRET: ${MATRIX_REGISTRATION_SHARED_SECRET}
+      MATRIX_MACAROON_SECRET_KEY: ${MATRIX_MACAROON_SECRET_KEY}
+      MATRIX_FORM_SECRET: ${MATRIX_FORM_SECRET}
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -eu
+        python - <<'PY'
+        import json
+        import os
+        import subprocess
+        import sys
+
+        if not os.path.exists("/data/homeserver.yaml"):
+            subprocess.check_call(
+                [
+                    sys.executable,
+                    "-m",
+                    "synapse.app.homeserver",
+                    "--server-name",
+                    os.environ["MATRIX_SERVER_NAME"],
+                    "--config-path",
+                    "/data/homeserver.yaml",
+                    "--generate-config",
+                    "--report-stats",
+                    os.environ["MATRIX_SYNAPSE_REPORT_STATS"],
+                ]
+            )
+
+        config = {
+            "public_baseurl": os.environ["MATRIX_PUBLIC_BASEURL"].rstrip("/") + "/",
+            "enable_registration": False,
+            "registration_shared_secret": os.environ["MATRIX_REGISTRATION_SHARED_SECRET"],
+            "macaroon_secret_key": os.environ["MATRIX_MACAROON_SECRET_KEY"],
+            "form_secret": os.environ["MATRIX_FORM_SECRET"],
+            "database": {
+                "name": "psycopg2",
+                "args": {
+                    "user": os.environ["MATRIX_POSTGRES_USER"],
+                    "password": os.environ["MATRIX_POSTGRES_PASSWORD"],
+                    "dbname": os.environ["MATRIX_POSTGRES_DB"],
+                    "host": "matrix-postgres",
+                    "port": 5432,
+                    "cp_min": 5,
+                    "cp_max": 10,
+                },
+            },
+            "listeners": [
+                {
+                    "port": 8008,
+                    "tls": False,
+                    "type": "http",
+                    "x_forwarded": True,
+                    "resources": [
+                        {
+                            "names": ["client", "federation"],
+                            "compress": False,
+                        }
+                    ],
+                }
+            ],
+            "suppress_key_server_warning": True,
+        }
+        with open("/data/matrix-overrides.yaml", "w", encoding="utf-8") as handle:
+            json.dump(config, handle)
+        PY
+        exec python -m synapse.app.homeserver \
+          --config-path /data/homeserver.yaml \
+          --config-path /data/matrix-overrides.yaml
+    volumes:
+      - matrix_synapse_storage:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://localhost:8008/health', timeout=3).read()"
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
