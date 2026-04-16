@@ -85,8 +85,8 @@ class ComposeWidget(QSplitter):
         if app is not None:
             app.aboutToQuit.connect(self._beende_hintergrund_threads)
 
-        self.container_bereich = ContainerBereich(DIENSTE, self)
         self.volumen_bereich = VolumenBereich(parent)
+        self.container_bereich = ContainerBereich(DIENSTE, self)
         self.ausgabe_bereich = AusgabeBereich(parent)
 
         if self._letzte_dienstauswahl is not None:
@@ -104,11 +104,11 @@ class ComposeWidget(QSplitter):
 
         unterer_splitter = QSplitter(Qt.Orientation.Horizontal, self)
         unterer_splitter.addWidget(self.volumen_bereich)
-        unterer_splitter.addWidget(self.ausgabe_bereich)
+        unterer_splitter.addWidget(self.container_bereich)
         unterer_splitter.setStretchFactor(0, 1)
         unterer_splitter.setStretchFactor(1, 2)
 
-        self.addWidget(self.container_bereich)
+        self.addWidget(self.ausgabe_bereich)
         self.addWidget(unterer_splitter)
 
         self.setStretchFactor(0, 1)

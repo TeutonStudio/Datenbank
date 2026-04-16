@@ -256,6 +256,7 @@ class Umgebungsvariablen:
 
     _VARIABLE_PATTERN = re.compile(r"\$\{([A-Z][A-Z0-9_]*)(?:(:?[-+?])([^}]*))?\}")
     _ABGELEITETE_VARIABLEN = {"NEO4J_AUTH"}
+    _VERALTETE_VARIABLEN = {"IMMICH_DB_DATA_LOCATION"}
 
     def __init__(self, env_pfad: Path, cache_pfad: Path):
         self._env_pfad = env_pfad
@@ -547,6 +548,8 @@ class Umgebungsvariablen:
         ergaenzte_variablen: list[Umgebungsvariable] = []
 
         for variable in geladene_variablen:
+            if variable.name in cls._VERALTETE_VARIABLEN:
+                continue
             if variable.name in cls._ABGELEITETE_VARIABLEN:
                 cls._ergaenze_neo4j_zugang_aus_auth(
                     variable.wert,
@@ -635,6 +638,8 @@ class Umgebungsvariablen:
         for variable in variablen:
             if variable.name in Umgebungsvariablen._ABGELEITETE_VARIABLEN:
                 continue
+            if variable.name in Umgebungsvariablen._VERALTETE_VARIABLEN:
+                continue
             if not variable.name and not variable.wert:
                 continue
             daten.append(
@@ -659,6 +664,8 @@ class Umgebungsvariablen:
         zeilen = []
         for variable in variablen:
             if variable.name in Umgebungsvariablen._ABGELEITETE_VARIABLEN:
+                continue
+            if variable.name in Umgebungsvariablen._VERALTETE_VARIABLEN:
                 continue
             if not variable.name and not variable.wert:
                 continue
