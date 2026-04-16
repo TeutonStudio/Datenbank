@@ -6,7 +6,7 @@ volumes:
 services:
   db:
     image: postgres:${POSTGRES_VERSION:-16}
-    container_name: db
+    container_name: n8n-database
     restart: unless-stopped
     expose:
       - 5432/tcp
