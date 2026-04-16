@@ -1,7 +1,7 @@
 # ClickHouse backend for Langfuse.
 
 volumes:
-  langfuse_clickhouse_data:
+  langfuse_clickhouse_storage:
   langfuse_clickhouse_logs:
 
 services:
@@ -19,7 +19,7 @@ services:
       CLICKHOUSE_USER: clickhouse
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
     volumes:
-      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_storage:/var/lib/clickhouse
       - langfuse_clickhouse_logs:/var/log/clickhouse-server
     healthcheck:
       test:
