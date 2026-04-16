@@ -17,12 +17,14 @@ class PodmanComposeStartKonfiguration:
     dienst_ids: tuple[str, ...]
     compose_dateien: tuple[Path, ...]
     umgebungsvariablen: dict[str, str]
+    profile: tuple[str, ...] = ()
 
     def als_dict(self) -> dict[str, object]:
         return {
             "dienst_ids": list(self.dienst_ids),
             "compose_dateien": list(_serialisiere_compose_dateien(self.compose_dateien)),
             "umgebungsvariablen": dict(sorted(self.umgebungsvariablen.items())),
+            "profile": list(self.profile),
         }
 
 
@@ -47,6 +49,7 @@ def baue_startkonfiguration(
             eindeutige_dienst_ids,
             entwurf_bevorzugen=False,
         ),
+        profile=_compose_profile_fuer_dienste(eindeutige_dienst_ids),
     )
 
 
@@ -55,6 +58,8 @@ def podman_compose_argumente(
     *argumente: str,
 ) -> list[str]:
     befehl = ["compose", "-p", PROJEKT_NAME]
+    for profil in konfiguration.profile:
+        befehl.extend(["--profile", profil])
     for compose_datei in konfiguration.compose_dateien:
         befehl.extend(["-f", str(compose_datei)])
     befehl.extend(argumente)
@@ -89,9 +94,12 @@ def lade_startkonfiguration(pfad: Path) -> PodmanComposeStartKonfiguration | Non
     dienst_ids = daten.get("dienst_ids")
     compose_dateien = daten.get("compose_dateien")
     umgebungsvariablen = daten.get("umgebungsvariablen")
+    profile = daten.get("profile", [])
     if not isinstance(dienst_ids, list) or not isinstance(compose_dateien, list):
         return None
     if not isinstance(umgebungsvariablen, dict):
+        return None
+    if not isinstance(profile, list):
         return None
 
     rekonstruierte_dateien: list[Path] = []
@@ -112,10 +120,23 @@ def lade_startkonfiguration(pfad: Path) -> PodmanComposeStartKonfiguration | Non
             return None
         rekonstruierte_dienst_ids.append(dienst_id)
 
+    rekonstruierte_profile = []
+    for profil in profile:
+        if not isinstance(profil, str) or not profil:
+            return None
+        rekonstruierte_profile.append(profil)
+
     return PodmanComposeStartKonfiguration(
         dienst_ids=tuple(sorted(set(rekonstruierte_dienst_ids))),
         compose_dateien=tuple(rekonstruierte_dateien),
         umgebungsvariablen=rekonstruierte_variablen,
+        profile=tuple(
+            sorted(
+                set(rekonstruierte_profile).union(
+                    _compose_profile_fuer_dienste(rekonstruierte_dienst_ids)
+                )
+            )
+        ),
     )
 
 
@@ -135,7 +156,7 @@ def loesche_startkonfiguration(pfad: Path) -> None:
             pfad.unlink()
         return
 
-    for schluessel in ("dienst_ids", "compose_dateien", "umgebungsvariablen"):
+    for schluessel in ("dienst_ids", "compose_dateien", "umgebungsvariablen", "profile"):
         daten.pop(schluessel, None)
 
     if daten:
@@ -217,3 +238,11 @@ def _eindeutige_dienst_ids(dienst_ids: Iterable[str]) -> tuple[str, ...]:
         bekannte_dienst_ids.add(dienst_id)
         einzigartige_dienst_ids.append(dienst_id)
     return tuple(einzigartige_dienst_ids)
+
+
+def _compose_profile_fuer_dienste(dienst_ids: Iterable[str]) -> tuple[str, ...]:
+    profile: list[str] = []
+    for dienst_id in dienst_ids:
+        if dienst_id == "ollama" and "gpu-amd" not in profile:
+            profile.append("gpu-amd")
+    return tuple(profile)
