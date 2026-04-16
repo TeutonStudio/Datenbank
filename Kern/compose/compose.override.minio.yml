@@ -1,7 +1,7 @@
 # Standalone MinIO service.
 
 volumes:
-  minio_data:
+  minio_storage:
 
 services:
   minio:
@@ -22,7 +22,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes:
-      - minio_data:/data
+      - minio_storage:/data
     healthcheck:
       test:
         - CMD
