@@ -1,3 +1,260 @@
+# Plan: Konsolen-Dialog in Status-Tabelle und Rest-Ausgabe aufteilen
+
+## Ziel
+
+`Schnittstelle/consolen_dialog.py` soll nicht mehr nur ein grosses Textfeld zeigen. Der Dialog soll laufende Podman-/Compose-/Ollama-Ausgaben in zwei Bereiche zerlegen:
+
+- Oben eine Tabelle fuer strukturierbare Statusinformationen, vor allem Container, Images, Pulls, Downloads und abgeschlossene Schritte.
+- Darunter ein Textfeld fuer alles, was nicht sauber tabellarisch darstellbar ist, zum Beispiel rohe Fehlermeldungen, Exit-Codes, Hinweise, Befehle, Warnungen und unerkannte Ausgabezeilen.
+
+Die bestehende Prozesslogik soll erhalten bleiben:
+
+- `PodmanProzessDialog` fuer einzelne Podman-Kommandos.
+- `PodmanProzessKetteDialog` fuer mehrere aufeinanderfolgende Podman-Kommandos.
+- `setze_abgeschlossen_callback(...)` liefert weiterhin die komplette Ausgabe als Text zurueck.
+- Abbrechen, Zeitlimit, Close-Schutz und Schliessen bleiben fachlich unveraendert.
+
+## Ist-Zustand
+
+`Schnittstelle/consolen_dialog.py` enthaelt zwei sehr aehnliche Dialogklassen. Beide besitzen aktuell:
+
+- `QLabel` fuer den Gesamtstatus.
+- ein einzelnes `QPlainTextEdit` als komplette Prozessausgabe.
+- Buttons fuer Abbrechen und Schliessen.
+- `QProcess` mit `readyReadStandardOutput`, `readyReadStandardError`, `errorOccurred` und `finished`.
+- eine interne Liste `_ausgabe`, die alle Textstuecke fuer den Abschluss-Callback sammelt.
+
+Die Aufrufstellen sind:
+
+- Compose-Stack starten in `Schnittstelle/verwaltung/compose_widget.py`.
+- Compose-Stack neu starten in `Schnittstelle/verwaltung/compose_widget.py`.
+- Compose-Stack stoppen in `Schnittstelle/verwaltung/compose_widget.py`.
+- Ollama-Modell pull in `Schnittstelle/verwaltung/ollama_widget.py`.
+
+## Zielbild UI
+
+Der Dialog bekommt statt nur einem Textfeld diese Struktur:
+
+1. Gesamtstatus oben wie bisher.
+2. Status-Tabelle.
+3. Rest-Ausgabe als schmaleres Textfeld darunter.
+4. Aktionsbuttons wie bisher.
+
+Vorgeschlagene Tabellen-Spalten:
+
+- `Objekt`: Containername, Servicename, Image-Layer, Modellname oder sonstiger Zielname.
+- `Typ`: `Container`, `Service`, `Image`, `Layer`, `Modell`, `Befehl`.
+- `Zustand`: zum Beispiel `Pulling`, `Downloading`, `Starting`, `Started`, `Running`, `Done`, `Error`.
+- `Fortschritt`: Prozent, Groesse oder leer.
+- `Details`: kurze Zusatzinformation.
+
+Falls die UI bewusst minimal bleiben soll, koennen die Spalten auf `Container` und `Zustand` reduziert werden. Technisch ist aber eine etwas breitere interne Struktur sinnvoll, weil Pull-/Download-Zeilen sonst in eine der beiden Spalten gequetscht werden.
+
+## Architektur
+
+### Gemeinsames Dialog-Basiswidget
+
+Die Duplikation zwischen `PodmanProzessDialog` und `PodmanProzessKetteDialog` sollte reduziert werden, ohne die oeffentliche API stark umzubauen.
+
+Plan:
+
+1. Eine interne Hilfsklasse oder Basisklasse einfuehren, zum Beispiel `_PodmanAusgabeDialogBasis`.
+2. Dort UI-Aufbau, Ausgabeverarbeitung, Tabelle, Rest-Textfeld und Parser halten.
+3. `PodmanProzessDialog` und `PodmanProzessKetteDialog` behalten ihre Namen und Konstruktoren, delegieren aber gemeinsame Logik an die Basis.
+
+Dadurch bleiben die Aufrufstellen weitgehend stabil.
+
+### Datenmodell
+
+Neue interne Dataclass:
+
+```python
+@dataclass
+class ProzessStatusEintrag:
+    schluessel: str
+    objekt: str
+    typ: str
+    zustand: str
+    fortschritt: str = ""
+    details: str = ""
+```
+
+Der `schluessel` dient dazu, bestehende Tabellenzeilen zu aktualisieren statt bei jedem Fortschrittsupdate neue Zeilen anzulegen.
+
+Beispiele:
+
+- `container:n8n`
+- `service:neo4j`
+- `image-layer:sha256:...`
+- `ollama-model:llama3.2`
+
+### Parser
+
+Neue interne Klasse, zum Beispiel `PodmanAusgabeParser`.
+
+Aufgabe:
+
+- Textchunks aus stdout/stderr annehmen.
+- `\r`-basierte Fortschrittsausgaben normalisieren.
+- erkannte Statuszeilen als `ProzessStatusEintrag` liefern.
+- unerkannte Zeilen als Rest-Ausgabe zurueckgeben.
+
+Wichtig: Der Parser darf keine Ausgabe verlieren. Jede nicht eindeutig erkannte Zeile muss ins untere Textfeld.
+
+## Erkennungsregeln
+
+### 1. Podman Compose Fortschritt
+
+Typische Compose-Ausgaben koennen enthalten:
+
+- Container erstellt, gestartet, gestoppt oder entfernt.
+- Services oder Images werden gepullt.
+- Layer werden heruntergeladen oder entpackt.
+- Schritte werden mit Haken, Spinnern oder Statuswoertern ausgegeben.
+
+Der Parser sollte schrittweise arbeiten:
+
+1. ANSI-Steuerzeichen entfernen.
+2. Sonderzeichen fuer Fortschritt tolerieren.
+3. Bekannte Statuswoerter suchen:
+   - `Pulling`
+   - `Pulled`
+   - `Downloading`
+   - `Extracting`
+   - `Creating`
+   - `Created`
+   - `Starting`
+   - `Started`
+   - `Stopping`
+   - `Stopped`
+   - `Removing`
+   - `Removed`
+   - `Error`
+   - `Done`
+4. Wenn eine Zeile ein Objekt plus Status enthaelt, Tabellenzeile aktualisieren.
+5. Wenn keine sichere Zuordnung moeglich ist, Zeile in die Rest-Ausgabe schreiben.
+
+### 2. Ollama Pull
+
+Ollama-Pull-Ausgaben sollen ebenfalls in die Tabelle, soweit moeglich:
+
+- `pulling manifest`
+- `pulling <digest> ...`
+- `verifying sha256 digest`
+- `writing manifest`
+- `success`
+- Prozent- oder Groessenfortschritt bei Layern
+
+Vorgeschlagene Zuordnung:
+
+- Modellname aus dem aufgerufenen Kommando als Tabellenobjekt, wenn die Ausgabe keinen eigenen Namen enthaelt.
+- Digest-/Layer-Zeilen als `Layer`.
+- Abschlusszeilen als `Modell` mit Zustand `Done`.
+
+### 3. Fehler und Hinweise
+
+Fehler sollen zweigleisig behandelt werden:
+
+- Wenn eine Zeile ein konkretes Objekt enthaelt, Tabelle mit Zustand `Error` aktualisieren.
+- Die vollstaendige Fehlermeldung bleibt zusaetzlich im unteren Textfeld, damit keine Diagnoseinformation verloren geht.
+
+Exit-Codes, Timeout-Hinweise, Abbruchmeldungen und `QProcess`-Fehler bleiben im Textfeld.
+
+## UI-Verhalten
+
+- Die Tabelle aktualisiert bestehende Zeilen live.
+- Neue Objekte werden unten angefuegt.
+- Die Tabelle scrollt optional zum zuletzt geaenderten Eintrag.
+- Das Textfeld bleibt read-only und scrollt wie bisher ans Ende.
+- Bei sehr vielen Download-Layern sollte die Tabelle nicht unendlich wachsen; fuer Layer kann spaeter eine Begrenzung oder Zusammenfassung eingebaut werden.
+- Die komplette Roh-Ausgabe bleibt weiterhin in `_ausgabe`, damit bestehende Callback-Nutzer keine Verhaltensaenderung bekommen.
+
+## Umsetzungsschritte
+
+1. In `Schnittstelle/consolen_dialog.py` die benoetigten Widgets importieren:
+   - `QTableWidget`
+   - `QTableWidgetItem`
+   - `QHeaderView`
+   - optional `QSplitter`
+2. `ProzessStatusEintrag` und `PodmanAusgabeParser` einfuehren.
+3. Eine gemeinsame Methode fuer UI-Aufbau einfuehren:
+   - Statuslabel
+   - Tabelle
+   - Rest-Ausgabefeld
+   - Buttons
+4. `_haenge_ausgabe_an(...)` umbauen:
+   - Rohtext weiter in `_ausgabe` sammeln.
+   - Parser mit neuem Textchunk fuettern.
+   - erkannte Eintraege in Tabelle upserten.
+   - Resttext ins Textfeld schreiben.
+5. Gemeinsame Tabellenlogik bauen:
+   - `_setze_status_eintrag(eintrag)`
+   - `_zeile_fuer_schluessel`
+   - `_aktualisiere_status_zeile`
+6. `PodmanProzessDialog` auf die neue Ausgabe-UI umstellen.
+7. `PodmanProzessKetteDialog` auf dieselbe Ausgabe-UI umstellen.
+8. Befehlskopfzeilen wie `$ podman ...` und `## Schritt ...` bewusst als Rest-Ausgabe anzeigen.
+9. Prozessfehler, Timeout und Abbruchmeldungen weiter im Resttext anzeigen.
+10. Abschlussstatus optional in Tabelle aufnehmen:
+    - Bei Erfolg eine Zeile `Befehl | Done`.
+    - Bei Fehler eine Zeile `Befehl | Error`.
+
+## Testplan
+
+### Manuelle Tests
+
+1. Compose-Stack starten.
+   - Containerstatus erscheint in der Tabelle.
+   - sonstige Compose-Ausgabe bleibt unten.
+2. Compose-Stack stoppen.
+   - Stop-/Remove-Status erscheint in der Tabelle.
+3. Compose-Stack neu starten.
+   - Beide Kommandos der Kette werden sauber getrennt.
+   - Tabelle bleibt ueber beide Schritte erhalten oder markiert den aktuellen Schritt eindeutig.
+4. Ollama-Modell pull aus dem Ollama-Widget.
+   - Modell-/Layer-/Downloadfortschritt erscheint in der Tabelle.
+   - Rohhinweise und Fehler bleiben unten sichtbar.
+5. Fehlerfall: nicht existierender Container oder falscher Modellname.
+   - Tabelle zeigt Fehler, falls ein Objekt erkannt wurde.
+   - Voller Fehlertext steht unten.
+6. Abbrechen waehrend laufendem Prozess.
+   - Abbruchmeldung steht unten.
+   - Dialog laesst sich erst nach Prozessende schliessen.
+
+### Automatisierbare Tests
+
+Falls Tests fuer Qt-lose Logik gewuenscht sind:
+
+1. Parser in eine eigene, GUI-unabhaengige Klasse legen.
+2. Unit-Tests fuer Beispielzeilen schreiben:
+   - Compose Container Started
+   - Compose Pulling/Downloading
+   - Ollama pulling manifest
+   - Ollama Layer mit Prozent
+   - unerkannte Zeile
+   - Fehlerzeile
+3. Sicherstellen, dass unerkannte Zeilen nie verloren gehen.
+
+## Risiken
+
+- Podman-/Compose-Ausgaben unterscheiden sich je nach Version, Terminalmodus und Sprache.
+- Fortschrittsausgaben nutzen oft `\r`; ohne richtige Normalisierung entstehen sehr viele Zwischenzeilen.
+- Unicode-Symbole aus Compose-Ausgaben koennen je nach Umgebung fehlen oder anders aussehen.
+- Zu aggressive Parserregeln koennen Diagnosezeilen faelschlich aus dem Textfeld entfernen.
+- Eine rein zweispaltige Tabelle ist fuer Downloads und Layer-Fortschritt wahrscheinlich zu eng.
+
+## Geklaerte Entscheidungen
+
+1. Die Tabelle bekommt zusaetzliche Spalten. Geplant sind `Objekt`, `Typ`, `Zustand`, `Fortschritt` und `Details`.
+2. Downloads und Pulls werden zu einer Zeile pro Dienst beziehungsweise pro Modell zusammengefasst. Es soll keine eigene Tabellenzeile pro Image-Layer geben.
+3. Das untere Textfeld zeigt nur Ausgabe, die nicht sinnvoll ueber die Tabelle dargestellt werden kann.
+4. Die Tabelle bleibt nach Prozessende erhalten. Der `Schliessen`-Button bleibt wie bisher erst aktiv, wenn der Prozess fertig ist.
+5. Fehler, die in der Tabelle als `Error` erkannt werden, stehen zusaetzlich immer im unteren Textfeld, damit Diagnoseinformationen erhalten bleiben.
+
+## Offene Fragen
+
+Aktuell keine offenen fachlichen Fragen.
+
 # Plan N8N-Verwalter
 
 ## Stand der Analyse
@@ -356,7 +613,9 @@ Geklaerte Zielrichtung:
 
 - Der Matrix-Server soll primaer privat ueber Tailscale erreichbar sein, aehnlich wie Immich.
 - Eine eigene gekaufte Domain ist fuer diesen privaten Betrieb nicht notwendig.
-- Als stabiler Matrix-Servername soll ein vollstaendiger Tailscale-Name verwendet werden, zum Beispiel `selatrix.<tailnet>.ts.net`.
+- Der vorhandene Tailscale-Geraetename des Rechners `teutonrechner` soll nicht geaendert werden.
+- Matrix soll deshalb einen eigenen Tailscale-Containerdienst mit eigenem Tailnet-Hostname bekommen.
+- Als stabiler Matrix-Servername soll der vollstaendige Tailscale-Name dieses Containers verwendet werden, zum Beispiel `selatrix.huchen-pirate.ts.net`.
 - Der reine Kurzname `selatrix` sollte nicht als `server_name` verwendet werden, weil Matrix-IDs und Client-Autodiscovery mit einem stabilen vollstaendigen Namen robuster sind.
 - Eine gekaufte Domain wird erst relevant, wenn spaeter oeffentliche Federation, ein schoenerer Matrix-Name wie `@user:selatrix.de` oder Zugriff ohne Tailscale gewuenscht ist.
 - Element Web soll mit eingeplant werden, damit Matrix direkt in der Anwendung nutzbar ist.
@@ -364,7 +623,7 @@ Geklaerte Zielrichtung:
 - Der Server soll fuer Kommunikation mit n8n nutzbar sein. Dafuer wird ein eigener Matrix-Bot/API-Nutzer fuer n8n eingeplant.
 - Direkte Nutzer-zu-Nutzer-Kommunikation soll innerhalb des privaten Servers moeglich sein.
 - VoIP, Anrufe und Sprachnachrichten sind aktuell nicht Ziel der Umsetzung. TURN/coturn wird deshalb nicht initial installiert.
-- E-Mail soll eingeplant werden, vor allem fuer Passwort-Reset, Verifikation und Benachrichtigungen.
+- E-Mail/SMTP wird initial nicht eingerichtet.
 - Persistenz soll ueber eigene Podman-Volumes laufen, nicht ueber Bind-Mounts in den Projektbaum.
 
 Ziel:
@@ -378,6 +637,7 @@ Ziel:
   - Logausgabe
   - eingebettete Weboberflaeche ueber Element Web
   - eigene Podman-Volumes fuer persistente Daten
+  - eigener Tailscale-Container mit eigener Tailnet-Identitaet
   - klare Trennung zwischen privatem Tailscale-Betrieb und spaeterem Public/Federation-Betrieb
 
 Geplante Dienststruktur:
@@ -386,6 +646,8 @@ Geplante Dienststruktur:
 - Anzeigename: `Matrix Synapse`
 - Hauptcontainer: `matrix-synapse`
 - Datenbankcontainer: `matrix-postgres`
+- Tailscale-Container: `matrix-tailscale`
+- interner Reverse-Proxy: `matrix-proxy`
 - Webclient-Dienst-ID: `matrix-element`
 - Webclient-Anzeigename: `Element Web`
 - Interne Synapse-Ports:
@@ -395,9 +657,11 @@ Geplante Dienststruktur:
   - Synapse lokal: `127.0.0.1:${MATRIX_SYNAPSE_PRIVATE_PORT:-8010}:8008`
   - Element lokal: `127.0.0.1:${MATRIX_ELEMENT_PRIVATE_PORT:-8011}:80`
 - Tailscale-Zugriff:
-  - bevorzugt ueber Tailscale Serve oder einen Host-Reverse-Proxy auf `https://selatrix.<tailnet>.ts.net`
-  - Synapse-Client-API unter `https://selatrix.<tailnet>.ts.net/_matrix`
-  - Element Web unter einer eigenen Route oder einem eigenen Namen, zum Beispiel `https://element.<tailnet>.ts.net`
+  - eigener Tailnet-Hostname ueber `TS_HOSTNAME=selatrix`
+  - eigener Tailscale-State im Podman-Volume `matrix_tailscale_state`
+  - Zugriff ueber `https://selatrix.huchen-pirate.ts.net`
+  - Synapse-Client-API unter `https://selatrix.huchen-pirate.ts.net/_matrix`
+  - Element Web unter `https://selatrix.huchen-pirate.ts.net/`
 - Oeffentliche Federation:
   - wird nicht initial umgesetzt
   - bleibt als spaeteres Public-Overlay moeglich
@@ -433,56 +697,66 @@ Neue Compose-Dateien:
    - eigener statischer Element-Konfigurations-Mount oder generierte Konfiguration
    - Homeserver-URL zeigt auf `MATRIX_PUBLIC_BASEURL`
    - lokaler Port ueber `MATRIX_ELEMENT_PRIVATE_PORT`
+4. `Kern/compose/compose.override.matrix-tailscale.yml`
+   - Tailscale-Container mit offiziellem Image `tailscale/tailscale`
+   - eigener Podman-Volume `matrix_tailscale_state` fuer `/var/lib/tailscale`
+   - `TS_HOSTNAME=selatrix`
+   - `TS_STATE_DIR=/var/lib/tailscale`
+   - `TS_AUTH_ONCE=true`
+   - initiale Anmeldung ueber `TAILSCALE_AUTHKEY`
+   - Auth-Key liegt vor, wird aber nicht in `plan.md` dokumentiert
+   - Serve-/Proxy-Konfiguration fuer privaten Tailnet-Zugriff
+5. `Kern/compose/compose.override.matrix-proxy.yml`
+   - interner Reverse-Proxy fuer Matrix-Pfade
+   - `/` leitet auf `matrix-element`
+   - `/_matrix` leitet auf `matrix-synapse:8008`
+   - `/_synapse/client` leitet auf `matrix-synapse:8008`
+   - keine oeffentliche Portfreigabe; Zugriff erfolgt ueber `matrix-tailscale`
 
 Initialisierung:
 
 1. Einen vorbereitenden Schritt fuer Synapse-Konfiguration definieren.
 2. Beim ersten Start muss `/data/homeserver.yaml` erzeugt werden.
 3. Die Generierung darf nur laufen, wenn noch keine `homeserver.yaml` existiert.
-4. Die generierte Konfiguration muss danach fuer Postgres, `public_baseurl`, Invite-only/Registration, E-Mail und Secrets angepasst werden.
+4. Die generierte Konfiguration muss danach fuer Postgres, `public_baseurl`, Invite-only/Registration, deaktivierte E-Mail und Secrets angepasst werden.
 5. Signing-Key, Medien, Uploads und Konfiguration bleiben im Podman-Volume `matrix_synapse_data`.
 6. Der initiale Admin-Nutzer wird nach dem ersten erfolgreichen Start per `register_new_matrix_user` erzeugt.
-7. Danach wird ein eigener n8n-Bot-Nutzer erzeugt, dessen Access Token in `.env` oder in einer spaeteren Secret-Verwaltung abgelegt wird.
+7. Geplanter Admin-Anzeigename: `Alexander`.
+8. Danach wird ein eigener n8n-Bot-Nutzer erzeugt, dessen Access Token in `.env` oder in einer spaeteren Secret-Verwaltung abgelegt wird.
+9. Geplanter n8n-Bot-Localpart: `selatrix`; geplanter Anzeigename: `selatrix (chat)`.
 
 Invite-only und Nutzer:
 
 1. Offene Registrierung bleibt deaktiviert.
 2. Neue Nutzer werden durch Admin-Aktion oder eine kontrollierte Invite-/Registrierungslogik angelegt.
-3. Fuer n8n wird ein eigener Nutzer eingeplant, zum Beispiel `@n8n:selatrix.<tailnet>.ts.net`.
+3. Fuer n8n wird ein eigener Nutzer eingeplant, zum Beispiel `@selatrix:selatrix.huchen-pirate.ts.net` mit Anzeigename `selatrix (chat)`.
 4. n8n kann ueber die Matrix Client-Server API Nachrichten senden und Raeume/Direct Messages nutzen.
 5. Direkte Kommunikation zwischen menschlichen Nutzern laeuft ueber Element Web oder mobile Matrix-Clients, solange diese den Tailscale-Namen erreichen.
-
-E-Mail:
-
-1. Synapse bekommt SMTP-Konfiguration ueber `.env`.
-2. Benoetigte Variablen:
-   - `MATRIX_SMTP_HOST`
-   - `MATRIX_SMTP_PORT`
-   - `MATRIX_SMTP_USER`
-   - `MATRIX_SMTP_PASSWORD`
-   - `MATRIX_SMTP_FROM`
-   - `MATRIX_SMTP_TLS`
-3. Ohne gueltige SMTP-Daten soll der Dienst lokal startbar bleiben, aber Passwort-Reset und Benachrichtigungen werden dann als nicht konfiguriert markiert.
 
 Dienstkatalog-Erweiterung:
 
 1. `matrix-synapse` in den zentralen Dienstkatalog aufnehmen.
 2. `matrix-element` in den zentralen Dienstkatalog aufnehmen.
-3. Compose-Dateien zuordnen:
+3. `matrix-tailscale` und `matrix-proxy` als technische Begleitdienste aufnehmen oder den Matrix-Diensten intern zuordnen.
+4. Compose-Dateien zuordnen:
    - `compose.override.matrix-postgres.yml`
    - `compose.override.matrix-synapse.yml`
    - `compose.override.matrix-element.yml`
-4. Container-Aliase zuordnen:
+   - `compose.override.matrix-tailscale.yml`
+   - `compose.override.matrix-proxy.yml`
+5. Container-Aliase zuordnen:
    - `matrix-synapse`
    - `synapse`
    - `matrix-postgres`
    - `matrix-element`
    - `element`
-5. Webeintrag fuer Element Web definieren:
+   - `matrix-tailscale`
+   - `matrix-proxy`
+6. Webeintrag fuer Element Web definieren:
    - Titel: `Element`
    - URL aus `MATRIX_ELEMENT_HOSTNAME` oder lokal `http://localhost:8011`
    - Auth-Modus: `formular/manuell`
-6. Synapse selbst bleibt primaer API-Dienst. Eine eigene Detailseite kann spaeter Status, Servername und Federation-Hinweise anzeigen.
+7. Synapse selbst bleibt primaer API-Dienst. Eine eigene Detailseite kann spaeter Status, Servername und Federation-Hinweise anzeigen.
 
 Env-Verwaltung:
 
@@ -493,6 +767,7 @@ Env-Verwaltung:
    - `MATRIX_REGISTRATION_SHARED_SECRET`
    - `MATRIX_MACAROON_SECRET_KEY`
    - `MATRIX_FORM_SECRET`
+   - `TAILSCALE_AUTHKEY`
 2. Standardwerte nur fuer ungefaehrliche lokale Werte setzen:
    - `MATRIX_POSTGRES_DB=synapse`
    - `MATRIX_POSTGRES_USER=synapse`
@@ -500,6 +775,7 @@ Env-Verwaltung:
    - `MATRIX_SYNAPSE_REPORT_STATS=no`
    - `MATRIX_SYNAPSE_PRIVATE_PORT=8010`
    - `MATRIX_ELEMENT_PRIVATE_PORT=8011`
+   - `TAILSCALE_HOSTNAME=selatrix`
 3. Secrets muessen vom Nutzer gesetzt oder durch eine sichere Generatorfunktion erzeugt werden.
 4. `.compose.state.json` darf langfristig keine Secrets im Klartext persistieren. Vor Matrix sollte die Persistenz der effektiven Umgebungsvariablen ueberarbeitet werden.
 5. Der Einstellungen-Dialog muss die Variablen anzeigen, sobald Matrix ausgewaehlt ist.
@@ -508,7 +784,7 @@ UI-Integration:
 
 1. Matrix/Synapse als optionalen Dienst in der Verwaltung anzeigen.
 2. Element Web als optionalen oder automatisch mit Matrix aktivierten Dienst anzeigen.
-3. Status fuer Synapse, Matrix-Postgres und Element aus Container-Aliasen erkennen.
+3. Status fuer Synapse, Matrix-Postgres, Element, Matrix-Proxy und Tailscale aus Container-Aliasen erkennen.
 4. Logs fuer Synapse und Element anzeigen.
 5. Webnavigation fuer Element Web aktivieren.
 6. Optional spaeter eigene Matrix-Detailseite bauen:
@@ -516,7 +792,6 @@ UI-Integration:
    - Public Base URL
    - Tailscale-Hinweis
    - Registrierungsstatus
-   - SMTP-Status
    - n8n-Bot-Status
    - Federation-Hinweis
 
@@ -526,16 +801,37 @@ Tailscale- und Domain-Planung:
 2. Voraussetzung ist, dass alle Clients, inklusive Handy und ggf. n8n-Host, im selben Tailnet sind oder den Tailscale-Endpunkt erreichen.
 3. Der Matrix-Servername sollte vor dem ersten Start final feststehen, weil er in Matrix-IDs und Signaturen eingeht.
 4. Empfohlener Wert:
-   - `MATRIX_SERVER_NAME=selatrix.<tailnet>.ts.net`
-   - `MATRIX_PUBLIC_BASEURL=https://selatrix.<tailnet>.ts.net`
-5. Wenn spaeter Federation mit fremden Matrix-Servern gewuenscht ist, muss die Architektur neu bewertet werden:
+   - `MATRIX_SERVER_NAME=selatrix.huchen-pirate.ts.net`
+   - `MATRIX_PUBLIC_BASEURL=https://selatrix.huchen-pirate.ts.net`
+5. Der Rechner darf im Tailnet weiter `teutonrechner` heissen; der Matrix-Tailscale-Container bekommt separat den Hostnamen `selatrix`.
+6. Tailscale-Konfiguration:
+   - `TAILSCALE_HOSTNAME=selatrix`
+   - `TAILSCALE_AUTHKEY` liegt vor und wird nur in `.env` oder einer spaeteren Secret-Verwaltung abgelegt.
+   - Fuer die Umsetzung sollte ein frischer Einmal-Auth-Key verwendet werden, weil der aktuelle Key im Chatverlauf steht.
+   - `matrix_tailscale_state` muss persistent bleiben, damit der Container nicht bei jedem Neustart als neues Geraet erscheint.
+   - `TS_AUTH_ONCE=true` verhindert unnoetige Neuanmeldungen, sobald State vorhanden ist.
+7. Synapse und Element laufen unter demselben Tailscale-Namen:
+   - Element Web: `https://selatrix.huchen-pirate.ts.net/`
+   - Synapse Client-API: `https://selatrix.huchen-pirate.ts.net/_matrix`
+   - Synapse Zusatzpfad: `https://selatrix.huchen-pirate.ts.net/_synapse/client`
+8. Wenn spaeter Federation mit fremden Matrix-Servern gewuenscht ist, muss die Architektur neu bewertet werden:
    - eigene Domain oder stabiler oeffentlicher DNS-Name
    - TLS
    - Reverse Proxy
    - `.well-known/matrix/client`
    - `.well-known/matrix/server`
    - Federation-Port oder Delegation
-6. Tailscale Funnel waere eine moegliche spaetere Public-Option, macht den Dienst aber oeffentlich und passt nicht zum aktuellen privaten Ziel.
+9. Tailscale Funnel waere eine moegliche spaetere Public-Option, macht den Dienst aber oeffentlich und passt nicht zum aktuellen privaten Ziel.
+
+Backup-Strategie:
+
+1. Fuer Synapse-Daten wird das Podman-Volume `matrix_synapse_data` gesichert.
+2. Fuer Postgres wird bevorzugt ein konsistenter Dump erzeugt, statt das laufende Datenvolume roh zu kopieren.
+3. Geplante Backup-Artefakte:
+   - `synapse-YYYYMMDD-HHMM.sql` aus `pg_dump`
+   - `matrix-synapse-data-YYYYMMDD-HHMM.tar` aus `podman volume export matrix_synapse_data`
+4. Das Postgres-Datenvolume `matrix_postgres_data` bleibt persistent, wird aber nicht als primaere Backup-Methode im laufenden Betrieb kopiert.
+5. Spaeter kann die App dafuer einen Backup-Button bekommen.
 
 Nicht initial umsetzen:
 
@@ -543,16 +839,18 @@ Nicht initial umsetzen:
 - Kein TURN/coturn.
 - Keine VoIP-/Anruf-Funktionen.
 - Keine offene Registrierung.
+- Keine E-Mail-/SMTP-Funktion.
 - Keine harte Public-Caddy-Konfiguration, solange der Betrieb privat ueber Tailscale geplant ist.
 
 Vor Implementierung noch konkret festlegen:
 
-1. Exakter Tailscale-FQDN fuer den Server, zum Beispiel `selatrix.<tailnet>.ts.net`.
-2. Ob Synapse und Element unter demselben Tailscale-Namen mit unterschiedlichen Pfaden oder unter zwei Tailscale-Namen laufen sollen.
-3. SMTP-Anbieter und Zugangsdaten.
-4. Name des ersten Admin-Nutzers.
-5. Name des n8n-Bot-Nutzers.
-6. Backup-Strategie fuer die Podman-Volumes `matrix_synapse_data` und `matrix_postgres_data`.
+1. Tailnet-Suffix ist festgelegt: `huchen-pirate.ts.net`.
+2. Matrix-FQDN ist festgelegt: `selatrix.huchen-pirate.ts.net`.
+3. Tailscale-Auth-Key fuer den Containerdienst `selatrix` liegt vor und wird nicht in die Planungsdatei geschrieben.
+4. Synapse und Element laufen unter demselben Tailscale-Namen mit Pfad-Routing.
+5. Name des ersten Admin-Nutzers: `Alexander`.
+6. Name des n8n-Bot-Nutzers: Localpart `selatrix`, Anzeigename `selatrix (chat)`.
+7. Backup-Strategie: Postgres per `pg_dump`, Synapse-Daten per Volume-Export.
 
 Abnahmekriterien:
 
@@ -561,11 +859,14 @@ Abnahmekriterien:
 - Die notwendigen Env-Variablen erscheinen im Einstellungen-Dialog.
 - `podman compose` startet Synapse mit eigenem Postgres.
 - Synapse-Daten, Konfiguration, Medien und Signing-Key bleiben in eigenen Podman-Volumes persistent.
+- Der Matrix-Tailscale-Container erscheint im Tailnet als eigener Host `selatrix`, ohne den Rechnernamen `teutonrechner` zu aendern.
+- Element Web ist unter `https://selatrix.huchen-pirate.ts.net/` erreichbar.
+- Synapse ist unter `https://selatrix.huchen-pirate.ts.net/_matrix` erreichbar.
 - Offene Registrierung ist deaktiviert.
 - Initialer Admin-Nutzer und n8n-Bot-Nutzer koennen angelegt werden.
 - n8n kann ueber den Bot-Nutzer Matrix-Nachrichten senden.
 - Private Nutzung funktioniert ueber Tailscale ohne gekaufte Domain.
-- VoIP, TURN und Public Federation bleiben bewusst deaktiviert.
+- VoIP, TURN, SMTP/E-Mail und Public Federation bleiben bewusst deaktiviert.
 
 ### Weitere geplante Dienste und Ausbauten
 
