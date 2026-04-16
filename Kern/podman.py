@@ -78,6 +78,7 @@ def prozessumgebung_fuer_konfiguration(
 ) -> dict[str, str]:
     umgebung = os.environ.copy()
     umgebung.update(konfiguration.umgebungsvariablen)
+    umgebung.pop("PODMAN_COMPOSE_PROVIDER", None)
     return umgebung
 
 
@@ -159,8 +160,7 @@ def startkonfigurationen_unterscheiden_sich(
 def loesche_startkonfiguration(pfad: Path) -> None:
     daten = _lade_status_daten(pfad)
     if not daten:
-        if pfad.exists():
-            pfad.unlink()
+        _loesche_datei_falls_vorhanden(pfad)
         return
 
     for schluessel in ("dienst_ids", "compose_dateien", "umgebungsvariablen", "profile"):
@@ -168,8 +168,8 @@ def loesche_startkonfiguration(pfad: Path) -> None:
 
     if daten:
         _speichere_status_daten(pfad, daten)
-    elif pfad.exists():
-        pfad.unlink()
+    else:
+        _loesche_datei_falls_vorhanden(pfad)
 
 
 def speichere_ausgewaehlte_dienste(
@@ -237,17 +237,28 @@ def _lade_status_daten(pfad: Path) -> dict[str, object]:
 
     try:
         daten = json.loads(pfad.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+    except (OSError, json.JSONDecodeError):
         return {}
 
     return daten if isinstance(daten, dict) else {}
 
 
 def _speichere_status_daten(pfad: Path, daten: dict[str, object]) -> None:
-    pfad.write_text(
-        json.dumps(daten, ensure_ascii=True, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    try:
+        pfad.write_text(
+            json.dumps(daten, ensure_ascii=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        return
+
+
+def _loesche_datei_falls_vorhanden(pfad: Path) -> None:
+    try:
+        if pfad.exists():
+            pfad.unlink()
+    except OSError:
+        return
 
 
 def _eindeutige_dienst_ids(dienst_ids: Iterable[str]) -> tuple[str, ...]:

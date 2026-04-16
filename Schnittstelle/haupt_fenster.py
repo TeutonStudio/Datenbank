@@ -2,7 +2,7 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QGridLayout, QMainWindow, QStackedWidget, QStatusBar, QWidget
 
 from Schnittstelle.horizontale_leiste import HorizontaleLeiste
-from Schnittstelle.vertikale_leiste import VertikaleLeiste
+from Schnittstelle.vertikale_leiste import VertikaleLeiste, ICON_PATH
 from Schnittstelle.verwaltung.ollama_widget import OllamaWidget
 from Schnittstelle.verwaltung.verwaltung_fenster import VerwaltungFenster
 from Schnittstelle.verwaltung.web_widget import ProgrammSeite
@@ -36,7 +36,7 @@ class HauptFenster(QMainWindow):
         self.statusbar = QStatusBar(self)
         self.setStatusBar(self.statusbar)
 
-        self.setWindowIcon(QIcon("./ui/icon/Logo.png"))
+        self.setWindowIcon(QIcon(str(ICON_PATH / "Logo.png")))
         self.setWindowTitle(PROGRAMM_NAME)
 
         self.grid_layout.init_list_widget()

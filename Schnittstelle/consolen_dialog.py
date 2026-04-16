@@ -54,6 +54,7 @@ class PodmanProzessDialog(QDialog):
         self.ausgabe_feld = QPlainTextEdit(self)
         self.ausgabe_feld.setReadOnly(True)
         self.ausgabe_feld.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.ausgabe_feld.setMaximumBlockCount(2000)
         layout.addWidget(self.ausgabe_feld)
 
         aktionen = QHBoxLayout()
@@ -220,6 +221,7 @@ class PodmanProzessKetteDialog(QDialog):
         self.ausgabe_feld = QPlainTextEdit(self)
         self.ausgabe_feld.setReadOnly(True)
         self.ausgabe_feld.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.ausgabe_feld.setMaximumBlockCount(2000)
         layout.addWidget(self.ausgabe_feld)
 
         aktionen = QHBoxLayout()

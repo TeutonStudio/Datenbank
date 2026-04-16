@@ -1,0 +1,31 @@
+# Private Tailscale ingress.
+
+volumes:
+  tailscale_state:
+
+services:
+  tailscale:
+    image: tailscale/tailscale:${TAILSCALE_VERSION:-latest}
+    container_name: tailscale
+    hostname: ${TAILSCALE_HOSTNAME:-selatrix}
+    restart: unless-stopped
+    environment:
+      TS_AUTHKEY: ${TAILSCALE_AUTHKEY}
+      TS_HOSTNAME: ${TAILSCALE_HOSTNAME:-selatrix}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_AUTH_ONCE: "true"
+      TS_SERVE_CONFIG: /config/serve-config.json
+    volumes:
+      - tailscale_state:/var/lib/tailscale
+      - ../tailscale:/config:ro,Z
+    healthcheck:
+      test:
+        - CMD
+        - tailscale
+        - status
+        - --peers=false
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s

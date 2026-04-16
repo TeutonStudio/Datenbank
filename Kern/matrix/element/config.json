@@ -1,0 +1,16 @@
+{
+  "brand": "Element",
+  "default_server_config": {
+    "m.homeserver": {
+      "base_url": "http://localhost:8012",
+      "server_name": "selatrix.huchen-pirate.ts.net"
+    }
+  },
+  "disable_custom_urls": true,
+  "disable_guests": true,
+  "features": {
+    "feature_group_calls": false,
+    "feature_video_rooms": false
+  },
+  "show_labs_settings": false
+}

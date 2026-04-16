@@ -34,6 +34,7 @@ class AusgabeBereich(QGroupBox):
         self.textfeld = QPlainTextEdit(self)
         self.textfeld.setReadOnly(True)
         self.textfeld.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.textfeld.setMaximumBlockCount(1000)
         self.textfeld.setPlaceholderText(
             "Die Logs des ausgewählten Containers werden hier angezeigt."
         )

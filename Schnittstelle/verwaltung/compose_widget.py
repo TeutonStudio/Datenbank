@@ -1,8 +1,6 @@
-import json
-import subprocess
 from typing import Any
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QCoreApplication, QThread, QTimer, Qt
 from PyQt6.QtWidgets import QSplitter
 
 from Kern.compose.env import Umgebungsvariablen
@@ -24,6 +22,12 @@ from Schnittstelle.verwaltung.compose.ausgabe_widget import AusgabeBereich
 from Schnittstelle.verwaltung.compose.container_widget import ContainerBereich, DienstDefinition
 from Schnittstelle.verwaltung.compose.volumen_widget import VolumenBereich
 from Schnittstelle.verwaltung.einstellungen_dialog import EinstellungenDialog
+from Schnittstelle.verwaltung.podman_runtime import (
+    HintergrundFehler,
+    HintergrundWorker,
+    fuehre_podman_kommando,
+    lade_json_liste,
+)
 
 PodmanDialog = PodmanProzessDialog | PodmanProzessKetteDialog
 
@@ -68,8 +72,18 @@ class ComposeWidget(QSplitter):
         self._ausgewaehlter_dienst = "Kein Dienst ausgewählt"
         self._letzter_status_fehler = ""
         self._aktualisierung_laeuft = False
+        self._aktualisierung_angefordert = False
+        self._log_auftrag_laeuft = False
+        self._log_aktualisierung_angefordert = False
+        self._log_anfrage_id = 0
+        self._statusdarstellung_laeuft = False
+        self._wird_beendet = False
         self._start_dialog: PodmanDialog | None = None
         self._prozess_dialoge: list[PodmanDialog] = []
+        self._hintergrund_threads: list[QThread] = []
+        app = QCoreApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._beende_hintergrund_threads)
 
         self.container_bereich = ContainerBereich(DIENSTE, self)
         self.volumen_bereich = VolumenBereich(parent)
@@ -100,54 +114,37 @@ class ComposeWidget(QSplitter):
         self.setStretchFactor(0, 1)
         self.setStretchFactor(1, 2)
 
-        self.volumen_bereich.aktualisieren_angefragt.connect(self._aktualisiere_volumen)
-        self.ausgabe_bereich.aktualisieren_angefragt.connect(self._aktualisiere_logs)
-
         self.container_bereich.container_gewaehlt.connect(self._setze_ausgewaehlten_container)
         self.container_bereich.dienste_schalten.connect(self._schalte_dienste)
         self.container_bereich.auswahl_geaendert.connect(self._bei_auswahl_geaendert)
         self.container_bereich.aktualisieren_angefragt.connect(self.aktualisiere_inhalt)
         self.container_bereich.einstellungen_angefragt.connect(self._oeffne_einstellungen)
-        self.volumen_bereich.aktualisieren_angefragt.connect(self._aktualisiere_volumen)
+        self.volumen_bereich.aktualisieren_angefragt.connect(self.aktualisiere_inhalt)
         self.ausgabe_bereich.aktualisieren_angefragt.connect(self._aktualisiere_logs)
 
+        self._log_timer = QTimer(self)
+        self._log_timer.setSingleShot(True)
+        self._log_timer.setInterval(200)
+        self._log_timer.timeout.connect(self._starte_log_aktualisierung)
+
     def aktualisiere_inhalt(self) -> None:
+        if self._wird_beendet:
+            return
         if self._aktualisierung_laeuft:
+            self._aktualisierung_angefordert = True
             return
         self._aktualisierung_laeuft = True
-        try:
-            self._aktualisiere_container()
-            self._aktualisiere_volumen()
-            self._aktualisiere_logs()
-        finally:
-            self._aktualisierung_laeuft = False
+        self._aktualisierung_angefordert = False
+        self._starte_hintergrundauftrag(
+            self._lade_status_und_volumen,
+            self._status_und_volumen_geladen,
+        )
 
     def _aktualisiere_container(self) -> None:
-        container_rohdaten, fehler = self._lade_json_liste(["ps", "-a"], timeout=4)
-        self._letzter_status_fehler = fehler
-        self._container_status = self._status_nach_dienst(container_rohdaten)
-        self._aktualisiere_containerdarstellung()
+        self.aktualisiere_inhalt()
 
     def _aktualisiere_volumen(self) -> None:
-        volumen_rohdaten, fehler = self._lade_json_liste(
-            [
-                "volume",
-                "ls",
-                "--filter",
-                f"label=com.docker.compose.project={PROJEKT_NAME}",
-            ],
-            timeout=4,
-        )
-        volumen_liste = []
-        for volumen in volumen_rohdaten:
-            volumen_liste.append(
-                {
-                    "name": str(volumen.get("Name") or ""),
-                    "driver": str(volumen.get("Driver") or ""),
-                    "mountpoint": str(volumen.get("Mountpoint") or ""),
-                }
-            )
-        self.volumen_bereich.setze_volumen(volumen_liste, fehler)
+        self.aktualisiere_inhalt()
 
     def _aktualisiere_logs(self) -> None:
         self.ausgabe_bereich.setze_ausgewaehlten_container(
@@ -162,14 +159,7 @@ class ComposeWidget(QSplitter):
             self.ausgabe_bereich.setze_ausgabe(text)
             return
 
-        ausgabe, fehler = self._fuehre_podman_kommando(
-            ["logs", "--tail", "200", self._ausgewaehlter_container],
-            timeout=5,
-        )
-        if fehler:
-            self.ausgabe_bereich.setze_ausgabe(fehler)
-            return
-        self.ausgabe_bereich.setze_ausgabe(ausgabe or "Keine Log-Ausgabe vorhanden.")
+        self._log_timer.start()
 
     def _setze_ausgewaehlten_container(
         self,
@@ -178,6 +168,8 @@ class ComposeWidget(QSplitter):
     ) -> None:
         self._ausgewaehlter_container = container_name
         self._ausgewaehlter_dienst = dienst_titel
+        if self._statusdarstellung_laeuft:
+            return
         self._aktualisiere_logs()
 
     def _schalte_dienste(self, befehl: str, dienst_ids: list[str]) -> None:
@@ -206,11 +198,15 @@ class ComposeWidget(QSplitter):
         self._aktualisiere_containerdarstellung()
 
     def _aktualisiere_containerdarstellung(self) -> None:
-        self.container_bereich.setze_status(
-            self._container_status,
-            self._letzter_status_fehler,
-            konfiguration_geaendert=self._konfiguration_ist_geaendert(),
-        )
+        self._statusdarstellung_laeuft = True
+        try:
+            self.container_bereich.setze_status(
+                self._container_status,
+                self._letzter_status_fehler,
+                konfiguration_geaendert=self._konfiguration_ist_geaendert(),
+            )
+        finally:
+            self._statusdarstellung_laeuft = False
 
     def _konfiguration_ist_geaendert(self) -> bool:
         if not self._irgendetwas_laeuft():
@@ -239,44 +235,6 @@ class ComposeWidget(QSplitter):
                 f"Einstellungen gespeichert: {self._umgebungsvariablen.env_pfad.name}"
             )
             self._aktualisiere_containerdarstellung()
-
-    def _lade_json_liste(
-        self,
-        basis_befehl: list[str],
-        *,
-        timeout: int,
-    ) -> tuple[list[dict[str, Any]], str]:
-        daten, fehler = self._fuehre_podman_kommando(
-            [*basis_befehl, "--format", "json"],
-            timeout=timeout,
-        )
-        if daten:
-            try:
-                geparst = json.loads(daten)
-                if isinstance(geparst, list):
-                    return geparst, ""
-                if isinstance(geparst, dict):
-                    return [geparst], ""
-            except json.JSONDecodeError:
-                pass
-
-        daten, fehler = self._fuehre_podman_kommando(
-            [*basis_befehl, "--format", "{{json .}}"],
-            timeout=timeout,
-        )
-        if not daten:
-            return [], fehler
-
-        zeilen = []
-        for zeile in daten.splitlines():
-            zeile = zeile.strip()
-            if not zeile:
-                continue
-            try:
-                zeilen.append(json.loads(zeile))
-            except json.JSONDecodeError:
-                continue
-        return zeilen, fehler if not zeilen else ""
 
     def _gewuenschte_startkonfiguration(
         self,
@@ -484,51 +442,58 @@ class ComposeWidget(QSplitter):
             dialog.open()
             return
 
-        bearbeitet, fehler_liste = self._stoppe_bekannte_container()
-        self.aktualisiere_inhalt()
-
-        if fehler_liste:
-            self.ausgabe_bereich.setze_ausgabe("\n\n".join(fehler_liste))
-            return
-
-        if bearbeitet:
-            self.ausgabe_bereich.setze_ausgabe(
-                f"stop: {', '.join(bearbeitet)}"
+        laufende_container = self._laufende_bekannte_container()
+        if laufende_container:
+            dialog = PodmanProzessDialog(
+                "Bekannte Container stoppen",
+                ["stop", *laufende_container],
+                self._projekt_pfad,
+                {},
+                timeout=300,
+                parent=self,
             )
+            self._start_dialog = dialog
+            self._prozess_dialoge.append(dialog)
+            dialog.finished.connect(lambda _result: self._entferne_prozess_dialog(dialog))
+            self.container_bereich.aktions_button.setEnabled(False)
+            self.ausgabe_bereich.setze_ausgabe(
+                f"Container werden gestoppt: {', '.join(laufende_container)}"
+            )
+
+            def abgeschlossen(erfolgreich: bool, ausgabe: str) -> None:
+                self.container_bereich.aktions_button.setEnabled(True)
+                if self._start_dialog is dialog:
+                    self._start_dialog = None
+
+                self.aktualisiere_inhalt()
+                if erfolgreich:
+                    self.ausgabe_bereich.setze_ausgabe(
+                        ausgabe or f"stop: {', '.join(laufende_container)}"
+                    )
+                    return
+                self.ausgabe_bereich.setze_ausgabe(
+                    ausgabe or "Bekannte Container konnten nicht gestoppt werden."
+                )
+
+            dialog.setze_abgeschlossen_callback(abgeschlossen)
+            dialog.starten()
+            dialog.open()
             return
 
         self.ausgabe_bereich.setze_ausgabe(
             "Es wurden keine laufenden Container gefunden."
         )
 
-    def _stoppe_bekannte_container(
-        self,
-        *,
-        entfernen: bool = False,
-    ) -> tuple[list[str], list[str]]:
-        bearbeitet: list[str] = []
-        fehler_liste: list[str] = []
-        befehl = "rm" if entfernen else "stop"
-
+    def _laufende_bekannte_container(self) -> list[str]:
+        container_namen: list[str] = []
         for dienst in DIENSTE:
             status = self._container_status.get(dienst.dienst_id, {})
             container_name = str(status.get("container_name") or "")
-            if not container_name:
+            if not container_name or not bool(status.get("laeuft")):
                 continue
-            if not entfernen and not bool(status.get("laeuft")):
-                continue
-
-            argumente = [befehl, container_name]
-            if entfernen:
-                argumente.insert(1, "-f")
-
-            _, fehler = self._fuehre_podman_kommando(argumente, timeout=120)
-            if fehler:
-                fehler_liste.append(f"{container_name}: {fehler}")
-                continue
-            bearbeitet.append(container_name)
-
-        return bearbeitet, fehler_liste
+            if container_name not in container_namen:
+                container_namen.append(container_name)
+        return container_namen
 
     def _status_nach_dienst(
         self,
@@ -585,32 +550,144 @@ class ComposeWidget(QSplitter):
             return [str(name) for name in namen if name]
         return []
 
-    def _fuehre_podman_kommando(
-        self,
-        argumente: list[str],
-        *,
-        umgebung: dict[str, str] | None = None,
-        timeout: int = 15,
-    ) -> tuple[str, str]:
-        try:
-            ergebnis = subprocess.run(
-                ["podman", *argumente],
-                cwd=self._projekt_pfad,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=timeout,
-                env=umgebung,
-            )
-        except FileNotFoundError:
-            return "", "Podman wurde nicht gefunden. Installation und Runtime folgen im nächsten Schritt."
-        except subprocess.TimeoutExpired:
-            return "", "Die Podman-Abfrage hat das Zeitlimit überschritten."
-        except KeyboardInterrupt:
-            return "", "Die Podman-Abfrage wurde abgebrochen."
+    def _lade_status_und_volumen(self) -> dict[str, object]:
+        container_rohdaten, container_fehler = lade_json_liste(
+            self._projekt_pfad,
+            ["ps", "-a"],
+            timeout=8,
+        )
+        volumen_rohdaten, volumen_fehler = lade_json_liste(
+            self._projekt_pfad,
+            [
+                "volume",
+                "ls",
+                "--filter",
+                f"label=com.docker.compose.project={PROJEKT_NAME}",
+            ],
+            timeout=8,
+        )
+        volumen_liste = [
+            {
+                "name": str(volumen.get("Name") or ""),
+                "driver": str(volumen.get("Driver") or ""),
+                "mountpoint": str(volumen.get("Mountpoint") or ""),
+            }
+            for volumen in volumen_rohdaten
+        ]
+        return {
+            "container_rohdaten": container_rohdaten,
+            "container_fehler": container_fehler,
+            "volumen_liste": volumen_liste,
+            "volumen_fehler": volumen_fehler,
+        }
 
-        stdout = ergebnis.stdout.strip()
-        stderr = ergebnis.stderr.strip()
-        if ergebnis.returncode != 0:
-            return "", stderr or stdout or "Die Podman-Abfrage ist fehlgeschlagen."
-        return stdout, ""
+    def _status_und_volumen_geladen(self, ergebnis: object) -> None:
+        if self._wird_beendet:
+            return
+        self._aktualisierung_laeuft = False
+        if isinstance(ergebnis, HintergrundFehler):
+            self._letzter_status_fehler = ergebnis.meldung
+            self._container_status = self._status_nach_dienst([])
+            self._aktualisiere_containerdarstellung()
+            self.volumen_bereich.setze_volumen([], ergebnis.meldung)
+        elif isinstance(ergebnis, dict):
+            container_rohdaten = ergebnis.get("container_rohdaten")
+            self._letzter_status_fehler = str(ergebnis.get("container_fehler") or "")
+            self._container_status = self._status_nach_dienst(
+                container_rohdaten if isinstance(container_rohdaten, list) else []
+            )
+            self._aktualisiere_containerdarstellung()
+
+            volumen_liste = ergebnis.get("volumen_liste")
+            self.volumen_bereich.setze_volumen(
+                volumen_liste if isinstance(volumen_liste, list) else [],
+                str(ergebnis.get("volumen_fehler") or ""),
+            )
+
+        self._aktualisiere_logs()
+        if self._aktualisierung_angefordert:
+            QTimer.singleShot(0, self.aktualisiere_inhalt)
+
+    def _starte_log_aktualisierung(self) -> None:
+        if self._wird_beendet:
+            return
+        if self._log_auftrag_laeuft:
+            self._log_aktualisierung_angefordert = True
+            return
+
+        container_name = self._ausgewaehlter_container
+        if not container_name:
+            self._aktualisiere_logs()
+            return
+
+        self._log_auftrag_laeuft = True
+        self._log_aktualisierung_angefordert = False
+        self._log_anfrage_id += 1
+        anfrage_id = self._log_anfrage_id
+        projekt_pfad = self._projekt_pfad
+
+        def lade_logs() -> dict[str, object]:
+            ausgabe, fehler = fuehre_podman_kommando(
+                projekt_pfad,
+                ["logs", "--tail", "200", container_name],
+                timeout=8,
+            )
+            return {
+                "anfrage_id": anfrage_id,
+                "container_name": container_name,
+                "ausgabe": ausgabe,
+                "fehler": fehler,
+            }
+
+        self._starte_hintergrundauftrag(lade_logs, self._logs_geladen)
+
+    def _logs_geladen(self, ergebnis: object) -> None:
+        if self._wird_beendet:
+            return
+        self._log_auftrag_laeuft = False
+        if isinstance(ergebnis, HintergrundFehler):
+            self.ausgabe_bereich.setze_ausgabe(ergebnis.meldung)
+        elif isinstance(ergebnis, dict):
+            if ergebnis.get("anfrage_id") == self._log_anfrage_id and (
+                ergebnis.get("container_name") == self._ausgewaehlter_container
+            ):
+                fehler = str(ergebnis.get("fehler") or "")
+                ausgabe = str(ergebnis.get("ausgabe") or "")
+                self.ausgabe_bereich.setze_ausgabe(
+                    fehler or ausgabe or "Keine Log-Ausgabe vorhanden."
+                )
+
+        if self._log_aktualisierung_angefordert:
+            self._log_timer.start()
+
+    def _starte_hintergrundauftrag(
+        self,
+        funktion,
+        abgeschlossen,
+    ) -> None:
+        if self._wird_beendet:
+            return
+        thread = QThread(self)
+        worker = HintergrundWorker(funktion)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.ausfuehren)
+        worker.fertig.connect(abgeschlossen)
+        worker.fertig.connect(thread.quit)
+        worker.fertig.connect(worker.deleteLater)
+        thread.finished.connect(lambda: self._entferne_hintergrund_thread(thread))
+        thread.finished.connect(thread.deleteLater)
+        thread._worker = worker
+        self._hintergrund_threads.append(thread)
+        thread.start()
+
+    def _entferne_hintergrund_thread(self, thread: QThread) -> None:
+        if thread in self._hintergrund_threads:
+            self._hintergrund_threads.remove(thread)
+
+    def _beende_hintergrund_threads(self) -> None:
+        self._wird_beendet = True
+        self._log_timer.stop()
+        for thread in list(self._hintergrund_threads):
+            thread.quit()
+            thread.wait(17000)
+            self._entferne_hintergrund_thread(thread)

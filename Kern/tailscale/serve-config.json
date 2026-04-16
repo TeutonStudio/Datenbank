@@ -1,0 +1,16 @@
+{
+  "TCP": {
+    "443": {
+      "HTTPS": true
+    }
+  },
+  "Web": {
+    "selatrix.huchen-pirate.ts.net:443": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://matrix-proxy:8080"
+        }
+      }
+    }
+  }
+}

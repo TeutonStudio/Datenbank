@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QCoreApplication, QThread, QTimer
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
@@ -17,6 +16,11 @@ from PyQt6.QtWidgets import (
 )
 
 from Schnittstelle.consolen_dialog import PodmanProzessDialog
+from Schnittstelle.verwaltung.podman_runtime import (
+    HintergrundFehler,
+    HintergrundWorker,
+    fuehre_podman_kommando,
+)
 from Schnittstelle.verwaltung.tabelle_widget import Tabelle
 
 
@@ -33,6 +37,13 @@ class OllamaWidget(QWidget):
         super().__init__(parent)
         self._projekt_pfad = Path(__file__).resolve().parents[2]
         self._pull_dialog: PodmanProzessDialog | None = None
+        self._aktualisierung_laeuft = False
+        self._aktualisierung_angefordert = False
+        self._wird_beendet = False
+        self._hintergrund_threads: list[QThread] = []
+        app = QCoreApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._beende_hintergrund_threads)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -69,24 +80,64 @@ class OllamaWidget(QWidget):
         self.aktualisierungs_timer.timeout.connect(self.aktualisiere_modelle)
         self.aktualisierungs_timer.start()
 
-        self.aktualisiere_modelle()
+        QTimer.singleShot(0, self.aktualisiere_modelle)
 
     def aktualisiere_modelle(self) -> None:
-        ausgabe, fehler = self._fuehre_podman_kommando(
-            ["exec", "ollama", "ollama", "list"],
-            timeout=10,
-        )
-        if fehler:
-            self._setze_modelle([])
-            self.status_label.setText(fehler)
+        if self._wird_beendet:
+            return
+        if not self.isVisible():
+            return
+        if self._aktualisierung_laeuft:
+            self._aktualisierung_angefordert = True
             return
 
-        modelle = self._parse_ollama_list(ausgabe)
-        self._setze_modelle(modelle)
-        if modelle:
-            self.status_label.setText(f"{len(modelle)} Modell(e) im Ollama-Container.")
-        else:
-            self.status_label.setText("Keine Modelle im Ollama-Container gefunden.")
+        self._aktualisierung_laeuft = True
+        self._aktualisierung_angefordert = False
+        self.status_label.setText("Modelle werden geladen ...")
+
+        projekt_pfad = self._projekt_pfad
+
+        def lade_modelle() -> tuple[str, str]:
+            return fuehre_podman_kommando(
+                projekt_pfad,
+                ["exec", "ollama", "ollama", "list"],
+                timeout=8,
+                timeout_meldung="Die Ollama-Abfrage hat das Zeitlimit überschritten.",
+                nicht_gefunden_meldung="Podman wurde nicht gefunden.",
+                fehler_meldung="Die Ollama-Abfrage ist fehlgeschlagen.",
+            )
+
+        self._starte_hintergrundauftrag(lade_modelle, self._modelle_geladen)
+
+    def _modelle_geladen(self, ergebnis: object) -> None:
+        if self._wird_beendet:
+            return
+        self._aktualisierung_laeuft = False
+
+        if isinstance(ergebnis, HintergrundFehler):
+            self._setze_modelle([])
+            self.status_label.setText(ergebnis.meldung)
+        elif isinstance(ergebnis, tuple):
+            ausgabe, fehler = ergebnis
+            if fehler:
+                self._setze_modelle([])
+                self.status_label.setText(fehler)
+            else:
+                modelle = self._parse_ollama_list(ausgabe)
+                self._setze_modelle(modelle)
+                if modelle:
+                    self.status_label.setText(
+                        f"{len(modelle)} Modell(e) im Ollama-Container."
+                    )
+                else:
+                    self.status_label.setText("Keine Modelle im Ollama-Container gefunden.")
+
+        if self._aktualisierung_angefordert and self.isVisible():
+            QTimer.singleShot(0, self.aktualisiere_modelle)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.aktualisiere_modelle()
 
     def _starte_pull(self) -> None:
         modellname = self.modell_eingabe.text().strip()
@@ -168,30 +219,34 @@ class OllamaWidget(QWidget):
             )
         return modelle
 
-    def _fuehre_podman_kommando(
+    def _starte_hintergrundauftrag(
         self,
-        argumente: list[str],
-        *,
-        timeout: int,
-    ) -> tuple[str, str]:
-        try:
-            ergebnis = subprocess.run(
-                ["podman", *argumente],
-                cwd=self._projekt_pfad,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=timeout,
-            )
-        except FileNotFoundError:
-            return "", "Podman wurde nicht gefunden."
-        except subprocess.TimeoutExpired:
-            return "", "Die Ollama-Abfrage hat das Zeitlimit überschritten."
-        except KeyboardInterrupt:
-            return "", "Die Ollama-Abfrage wurde abgebrochen."
+        funktion,
+        abgeschlossen,
+    ) -> None:
+        if self._wird_beendet:
+            return
+        thread = QThread(self)
+        worker = HintergrundWorker(funktion)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.ausfuehren)
+        worker.fertig.connect(abgeschlossen)
+        worker.fertig.connect(thread.quit)
+        worker.fertig.connect(worker.deleteLater)
+        thread.finished.connect(lambda: self._entferne_hintergrund_thread(thread))
+        thread.finished.connect(thread.deleteLater)
+        thread._worker = worker
+        self._hintergrund_threads.append(thread)
+        thread.start()
 
-        stdout = ergebnis.stdout.strip()
-        stderr = ergebnis.stderr.strip()
-        if ergebnis.returncode != 0:
-            return "", stderr or stdout or "Die Ollama-Abfrage ist fehlgeschlagen."
-        return stdout, ""
+    def _entferne_hintergrund_thread(self, thread: QThread) -> None:
+        if thread in self._hintergrund_threads:
+            self._hintergrund_threads.remove(thread)
+
+    def _beende_hintergrund_threads(self) -> None:
+        self._wird_beendet = True
+        self.aktualisierungs_timer.stop()
+        for thread in list(self._hintergrund_threads):
+            thread.quit()
+            thread.wait(9000)
+            self._entferne_hintergrund_thread(thread)

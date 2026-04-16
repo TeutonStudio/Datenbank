@@ -1,7 +1,7 @@
 # Compose layout
 
 Die Dateien in diesem Ordner sind für `podman compose` als zusammensetzbare Teilstücke gedacht.
-Alle Bind-Mount-Pfade sind relativ zu [compose.yml](/home/alex/Programme/Container/N8nAnwendung/compose/compose.yml) und zeigen deshalb mit `../` ins Projektwurzelverzeichnis.
+Alle Bind-Mount-Pfade sind relativ zu [compose.yml](/home/alex/Programme/Container/Selatrix/Kern/compose/compose.yml) und zeigen deshalb mit `../` ins Projektwurzelverzeichnis.
 
 ## Typische Nutzung
 
@@ -86,8 +86,8 @@ gleichzeitig laufen. Der Tailscale-Serve-Endpunkt leitet auf `matrix-proxy:8080`
 
 - `compose.override.private.yml` und `compose.override.public.yml` sind alternative Overlays und sollten nicht gemeinsam geladen werden.
 - Docker-spezifische Mechanismen aus der Legacy-Datei wie `include`, `!reset` und `host-gateway` wurden bewusst entfernt, damit die Dateien für Podman Compose standardnäher bleiben.
-- Für öffentliche Exposition setzt [compose.override.public.yml](/home/alex/Programme/Container/N8nAnwendung/compose/compose.override.public.yml) weiterhin eine vorhandene [Caddyfile](/home/alex/Programme/Container/N8nAnwendung/Caddyfile) und ein Verzeichnis [caddy-addon](/home/alex/Programme/Container/N8nAnwendung/caddy-addon) voraus.
-- [compose.override.supabase.yml](/home/alex/Programme/Container/N8nAnwendung/compose/compose.override.supabase.yml) ist aktuell nur ein Platzhalter, weil die Supabase-Compose-Dateien laut Plan noch direkt ins Projekt übernommen werden müssen.
+- Für öffentliche Exposition setzt [compose.override.public.yml](/home/alex/Programme/Container/Selatrix/Kern/compose/compose.override.public.yml) weiterhin eine vorhandene [Caddyfile](/home/alex/Programme/Container/Selatrix/Kern/Caddyfile) und ein Verzeichnis [caddy-addon](/home/alex/Programme/Container/Selatrix/Kern/caddy-addon) voraus.
+- [compose.override.supabase.yml](/home/alex/Programme/Container/Selatrix/Kern/compose/compose.override.supabase.yml) ist aktuell nur ein Platzhalter, weil die Supabase-Compose-Dateien laut Plan noch direkt ins Projekt übernommen werden müssen.
 - Der Tailscale-Auth-Key gehoert in `.env` oder eine spaetere Secret-Verwaltung und darf nicht in diese README oder Compose-Dateien geschrieben werden.
 - Nach dem ersten erfolgreichen Matrix-Start koennen Admin- und Bot-Nutzer im Synapse-Container angelegt werden:
 

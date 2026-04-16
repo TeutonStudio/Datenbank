@@ -1,10 +1,10 @@
-import os
+from pathlib import Path
 
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QListWidget, QListWidgetItem
 
-ICON_PATH = "./Schnittstelle/icon/"
+ICON_PATH = Path(__file__).resolve().parent / "icon"
 
 BREITE = { "nur_icon": 55, "mit_text": 200 }
 
@@ -49,14 +49,15 @@ class VertikalerEintrag(QListWidgetItem):
     def __init__(self, text: str):
         super().__init__()
         self.text_str = text
-        self.icon_str = os.path.join(ICON_PATH, text.lower() + ".svg")
+        self.icon_pfad = ICON_PATH / f"{text.lower()}.svg"
     
-    def definiere_icon(self, icon_str: str | None = None):
-        if icon_str: self.icon_str = icon_str
-        pfad = ""
-        if os.path.exists(self.icon_str): pfad = self.icon_str
-        else: pfad = "./Schnittstelle/icon/settings.svg"
-        self.setIcon(QIcon(pfad))
+    def definiere_icon(self, icon_pfad: Path | str | None = None):
+        if icon_pfad:
+            self.icon_pfad = Path(icon_pfad)
+        pfad = self.icon_pfad
+        if not pfad.exists():
+            pfad = ICON_PATH / "settings.svg"
+        self.setIcon(QIcon(str(pfad)))
         self.setSizeHint(QSize(40, 40))
 
     def schalter(self,b: bool): self.zeige_icon() if b else self.zeige_texticon()

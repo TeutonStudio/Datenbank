@@ -38,11 +38,11 @@ class HorizontaleLeiste(QFrame):
         self.horizontalLayout.addStretch()
         
         self.title_icon.setText("")
-        self.title_icon.setPixmap(QPixmap(ICON_PATH+"Logo.png"))
+        self.title_icon.setPixmap(QPixmap(str(ICON_PATH / "Logo.png")))
         self.title_icon.setScaledContents(True)
         
         self.menu_btn.setText("")
-        self.menu_btn.setIcon(QIcon(ICON_PATH+"close.svg"))
+        self.menu_btn.setIcon(QIcon(str(ICON_PATH / "close.svg")))
         self.menu_btn.setIconSize(QSize(30, 30))
         self.menu_btn.setCheckable(True)
         self.menu_btn.setChecked(False)
@@ -53,8 +53,8 @@ class HorizontaleLeiste(QFrame):
         self.title_label.setText(titel)
 
     def button_icon_change(self, status):
-        pfad = ICON_PATH + ("open" if status else "close") + ".svg"
-        self.menu_btn.setIcon(QIcon(pfad))
+        pfad = ICON_PATH / f"{'open' if status else 'close'}.svg"
+        self.menu_btn.setIcon(QIcon(str(pfad)))
 
     def init_single_slot(self, side_menu: VertikaleLeiste, setCurrentIndex: Callable[[int],None]):
         self.menu_btn.toggled['bool'].connect(side_menu.setze_darstellung)
