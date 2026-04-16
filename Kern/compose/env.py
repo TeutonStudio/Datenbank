@@ -71,16 +71,15 @@ class Umgebungsvariablen:
             "compose.override.matrix-postgres.yml",
             "compose.override.matrix-synapse.yml",
             "compose.override.matrix-element.yml",
-            "compose.override.matrix-tailscale.yml",
             "compose.override.matrix-proxy.yml",
         ),
         "matrix-element": (
             "compose.override.matrix-postgres.yml",
             "compose.override.matrix-synapse.yml",
             "compose.override.matrix-element.yml",
-            "compose.override.matrix-tailscale.yml",
             "compose.override.matrix-proxy.yml",
         ),
+        "tailscale": ("compose.override.tailscale.yml",),
     }
 
     DIENST_ZUSAETZLICHE_DEFINITIONEN: dict[str, tuple[UmgebungsvariableDefinition, ...]] = {
@@ -200,12 +199,6 @@ class Umgebungsvariablen:
                 hat_standardwert=True,
                 standardwert="http://localhost:8011",
             ),
-            UmgebungsvariableDefinition(
-                "TAILSCALE_HOSTNAME",
-                dienst_ids=("matrix-synapse",),
-                hat_standardwert=True,
-                standardwert="selatrix",
-            ),
         ),
         "matrix-element": (
             UmgebungsvariableDefinition(
@@ -250,9 +243,11 @@ class Umgebungsvariablen:
                 hat_standardwert=True,
                 standardwert="http://localhost:8011",
             ),
+        ),
+        "tailscale": (
             UmgebungsvariableDefinition(
                 "TAILSCALE_HOSTNAME",
-                dienst_ids=("matrix-element",),
+                dienst_ids=("tailscale",),
                 hat_standardwert=True,
                 standardwert="selatrix",
             ),

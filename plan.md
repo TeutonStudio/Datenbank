@@ -869,7 +869,7 @@ Geklaerte Zielrichtung:
 - Der Matrix-Server soll primaer privat ueber Tailscale erreichbar sein, aehnlich wie Immich.
 - Eine eigene gekaufte Domain ist fuer diesen privaten Betrieb nicht notwendig.
 - Der vorhandene Tailscale-Geraetename des Rechners `teutonrechner` soll nicht geaendert werden.
-- Matrix soll deshalb einen eigenen Tailscale-Containerdienst mit eigenem Tailnet-Hostname bekommen.
+- Tailscale soll deshalb als eigener Dienst mit eigenem Tailnet-Hostname umgesetzt werden, nicht als Bestandteil des Matrix-Dienstes.
 - Als stabiler Matrix-Servername soll der vollstaendige Tailscale-Name dieses Containers verwendet werden, zum Beispiel `selatrix.huchen-pirate.ts.net`.
 - Der reine Kurzname `selatrix` sollte nicht als `server_name` verwendet werden, weil Matrix-IDs und Client-Autodiscovery mit einem stabilen vollstaendigen Namen robuster sind.
 - Eine gekaufte Domain wird erst relevant, wenn spaeter oeffentliche Federation, ein schoenerer Matrix-Name wie `@user:selatrix.de` oder Zugriff ohne Tailscale gewuenscht ist.
@@ -892,7 +892,7 @@ Ziel:
   - Logausgabe
   - eingebettete Weboberflaeche ueber Element Web
   - eigene Podman-Volumes fuer persistente Daten
-  - eigener Tailscale-Container mit eigener Tailnet-Identitaet
+  - optional kombinierbarer Tailscale-Dienst mit eigener Tailnet-Identitaet
   - klare Trennung zwischen privatem Tailscale-Betrieb und spaeterem Public/Federation-Betrieb
 
 Geplante Dienststruktur:
@@ -901,8 +901,8 @@ Geplante Dienststruktur:
 - Anzeigename: `Matrix Synapse`
 - Hauptcontainer: `matrix-synapse`
 - Datenbankcontainer: `matrix-postgres`
-- Tailscale-Container: `matrix-tailscale`
 - interner Reverse-Proxy: `matrix-proxy`
+- separater Tailscale-Dienst: `tailscale`
 - Webclient-Dienst-ID: `matrix-element`
 - Webclient-Anzeigename: `Element Web`
 - Interne Synapse-Ports:
@@ -910,10 +910,10 @@ Geplante Dienststruktur:
   - Federation-Port `8448` wird initial nicht veroeffentlicht
 - Lokale private Veroeffentlichung:
   - Synapse lokal: `127.0.0.1:${MATRIX_SYNAPSE_PRIVATE_PORT:-8010}:8008`
-  - Element lokal: `127.0.0.1:${MATRIX_ELEMENT_PRIVATE_PORT:-8011}:80`
+  - Element lokal: `127.0.0.1:${MATRIX_ELEMENT_PRIVATE_PORT:-8011}:8080`
 - Tailscale-Zugriff:
   - eigener Tailnet-Hostname ueber `TS_HOSTNAME=selatrix`
-  - eigener Tailscale-State im Podman-Volume `matrix_tailscale_state`
+  - eigener Tailscale-State im Podman-Volume `tailscale_state`
   - Zugriff ueber `https://selatrix.huchen-pirate.ts.net`
   - Synapse-Client-API unter `https://selatrix.huchen-pirate.ts.net/_matrix`
   - Element Web unter `https://selatrix.huchen-pirate.ts.net/`
@@ -952,9 +952,9 @@ Neue Compose-Dateien:
    - eigener statischer Element-Konfigurations-Mount oder generierte Konfiguration
    - Homeserver-URL zeigt auf `MATRIX_PUBLIC_BASEURL`
    - lokaler Port ueber `MATRIX_ELEMENT_PRIVATE_PORT`
-4. `Kern/compose/compose.override.matrix-tailscale.yml`
+4. `Kern/compose/compose.override.tailscale.yml`
    - Tailscale-Container mit offiziellem Image `tailscale/tailscale`
-   - eigener Podman-Volume `matrix_tailscale_state` fuer `/var/lib/tailscale`
+   - eigener Podman-Volume `tailscale_state` fuer `/var/lib/tailscale`
    - `TS_HOSTNAME=selatrix`
    - `TS_STATE_DIR=/var/lib/tailscale`
    - `TS_AUTH_ONCE=true`
@@ -966,7 +966,7 @@ Neue Compose-Dateien:
    - `/` leitet auf `matrix-element`
    - `/_matrix` leitet auf `matrix-synapse:8008`
    - `/_synapse/client` leitet auf `matrix-synapse:8008`
-   - keine oeffentliche Portfreigabe; Zugriff erfolgt ueber `matrix-tailscale`
+   - lokale Portfreigabe fuer Tests; Tailscale leitet bei aktivem Tailscale-Dienst auf `matrix-proxy:8080`
 
 Initialisierung:
 
@@ -992,26 +992,28 @@ Dienstkatalog-Erweiterung:
 
 1. `matrix-synapse` in den zentralen Dienstkatalog aufnehmen.
 2. `matrix-element` in den zentralen Dienstkatalog aufnehmen.
-3. `matrix-tailscale` und `matrix-proxy` als technische Begleitdienste aufnehmen oder den Matrix-Diensten intern zuordnen.
-4. Compose-Dateien zuordnen:
+3. `tailscale` als eigenen Dienst aufnehmen.
+4. `matrix-proxy` dem Matrix-Dienst zuordnen.
+5. Matrix-Compose-Dateien zuordnen:
    - `compose.override.matrix-postgres.yml`
    - `compose.override.matrix-synapse.yml`
    - `compose.override.matrix-element.yml`
-   - `compose.override.matrix-tailscale.yml`
    - `compose.override.matrix-proxy.yml`
-5. Container-Aliase zuordnen:
+6. Tailscale-Compose-Datei zuordnen:
+   - `compose.override.tailscale.yml`
+7. Container-Aliase zuordnen:
    - `matrix-synapse`
    - `synapse`
    - `matrix-postgres`
    - `matrix-element`
    - `element`
-   - `matrix-tailscale`
    - `matrix-proxy`
-6. Webeintrag fuer Element Web definieren:
+   - `tailscale`
+8. Webeintrag fuer Element Web definieren:
    - Titel: `Element`
    - URL aus `MATRIX_ELEMENT_HOSTNAME` oder lokal `http://localhost:8011`
    - Auth-Modus: `formular/manuell`
-7. Synapse selbst bleibt primaer API-Dienst. Eine eigene Detailseite kann spaeter Status, Servername und Federation-Hinweise anzeigen.
+9. Synapse selbst bleibt primaer API-Dienst. Eine eigene Detailseite kann spaeter Status, Servername und Federation-Hinweise anzeigen.
 
 Env-Verwaltung:
 
@@ -1022,7 +1024,6 @@ Env-Verwaltung:
    - `MATRIX_REGISTRATION_SHARED_SECRET`
    - `MATRIX_MACAROON_SECRET_KEY`
    - `MATRIX_FORM_SECRET`
-   - `TAILSCALE_AUTHKEY`
 2. Standardwerte nur fuer ungefaehrliche lokale Werte setzen:
    - `MATRIX_POSTGRES_DB=synapse`
    - `MATRIX_POSTGRES_USER=synapse`
@@ -1030,16 +1031,20 @@ Env-Verwaltung:
    - `MATRIX_SYNAPSE_REPORT_STATS=no`
    - `MATRIX_SYNAPSE_PRIVATE_PORT=8010`
    - `MATRIX_ELEMENT_PRIVATE_PORT=8011`
-   - `TAILSCALE_HOSTNAME=selatrix`
+   - `MATRIX_ELEMENT_INTERNAL_PORT=8080`
+   - `MATRIX_PROXY_PRIVATE_PORT=8012`
 3. Secrets muessen vom Nutzer gesetzt oder durch eine sichere Generatorfunktion erzeugt werden.
 4. `.compose.state.json` darf langfristig keine Secrets im Klartext persistieren. Vor Matrix sollte die Persistenz der effektiven Umgebungsvariablen ueberarbeitet werden.
-5. Der Einstellungen-Dialog muss die Variablen anzeigen, sobald Matrix ausgewaehlt ist.
+5. Tailscale hat eigene Variablen:
+   - Pflichtvariable `TAILSCALE_AUTHKEY`
+   - Standardwert `TAILSCALE_HOSTNAME=selatrix`
+6. Der Einstellungen-Dialog muss Matrix- und Tailscale-Variablen passend zum jeweils ausgewaehlten Dienst anzeigen.
 
 UI-Integration:
 
 1. Matrix/Synapse als optionalen Dienst in der Verwaltung anzeigen.
 2. Element Web als optionalen oder automatisch mit Matrix aktivierten Dienst anzeigen.
-3. Status fuer Synapse, Matrix-Postgres, Element, Matrix-Proxy und Tailscale aus Container-Aliasen erkennen.
+3. Status fuer Synapse, Matrix-Postgres, Element, Matrix-Proxy und den separaten Tailscale-Dienst aus Container-Aliasen erkennen.
 4. Logs fuer Synapse und Element anzeigen.
 5. Webnavigation fuer Element Web aktivieren.
 6. Optional spaeter eigene Matrix-Detailseite bauen:
@@ -1058,12 +1063,12 @@ Tailscale- und Domain-Planung:
 4. Empfohlener Wert:
    - `MATRIX_SERVER_NAME=selatrix.huchen-pirate.ts.net`
    - `MATRIX_PUBLIC_BASEURL=https://selatrix.huchen-pirate.ts.net`
-5. Der Rechner darf im Tailnet weiter `teutonrechner` heissen; der Matrix-Tailscale-Container bekommt separat den Hostnamen `selatrix`.
+5. Der Rechner darf im Tailnet weiter `teutonrechner` heissen; der separate Tailscale-Dienst bekommt den Hostnamen `selatrix`.
 6. Tailscale-Konfiguration:
    - `TAILSCALE_HOSTNAME=selatrix`
    - `TAILSCALE_AUTHKEY` liegt vor und wird nur in `.env` oder einer spaeteren Secret-Verwaltung abgelegt.
    - Fuer die Umsetzung sollte ein frischer Einmal-Auth-Key verwendet werden, weil der aktuelle Key im Chatverlauf steht.
-   - `matrix_tailscale_state` muss persistent bleiben, damit der Container nicht bei jedem Neustart als neues Geraet erscheint.
+   - `tailscale_state` muss persistent bleiben, damit der Container nicht bei jedem Neustart als neues Geraet erscheint.
    - `TS_AUTH_ONCE=true` verhindert unnoetige Neuanmeldungen, sobald State vorhanden ist.
 7. Synapse und Element laufen unter demselben Tailscale-Namen:
    - Element Web: `https://selatrix.huchen-pirate.ts.net/`
@@ -1114,7 +1119,7 @@ Abnahmekriterien:
 - Die notwendigen Env-Variablen erscheinen im Einstellungen-Dialog.
 - `podman compose` startet Synapse mit eigenem Postgres.
 - Synapse-Daten, Konfiguration, Medien und Signing-Key bleiben in eigenen Podman-Volumes persistent.
-- Der Matrix-Tailscale-Container erscheint im Tailnet als eigener Host `selatrix`, ohne den Rechnernamen `teutonrechner` zu aendern.
+- Der separate Tailscale-Dienst erscheint im Tailnet als eigener Host `selatrix`, ohne den Rechnernamen `teutonrechner` zu aendern.
 - Element Web ist unter `https://selatrix.huchen-pirate.ts.net/` erreichbar.
 - Synapse ist unter `https://selatrix.huchen-pirate.ts.net/_matrix` erreichbar.
 - Offene Registrierung ist deaktiviert.

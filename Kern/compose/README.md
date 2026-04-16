@@ -52,8 +52,8 @@ podman compose \
   up -d
 ```
 
-Für Matrix/Synapse werden Synapse, eigener Postgres, Element Web, ein interner
-Caddy-Proxy und ein eigener Tailscale-Container geladen:
+Für Matrix/Synapse werden Synapse, eigener Postgres, Element Web und ein interner
+Caddy-Proxy geladen:
 
 ```sh
 podman compose \
@@ -61,10 +61,26 @@ podman compose \
   -f compose/compose.override.matrix-postgres.yml \
   -f compose/compose.override.matrix-synapse.yml \
   -f compose/compose.override.matrix-element.yml \
-  -f compose/compose.override.matrix-tailscale.yml \
   -f compose/compose.override.matrix-proxy.yml \
   up -d
 ```
+
+Element Web lauscht im Container auf `MATRIX_ELEMENT_INTERNAL_PORT` mit Standard
+`8080`, weil das Image unprivilegiert laeuft und unter Podman nicht verlaesslich
+auf Port `80` binden kann.
+
+Tailscale ist ein eigener Dienst und kann separat oder zusammen mit Matrix
+geladen werden:
+
+```sh
+podman compose \
+  -f compose/compose.yml \
+  -f compose/compose.override.tailscale.yml \
+  up -d
+```
+
+Wenn Tailscale Matrix veroeffentlichen soll, muessen Matrix und Tailscale
+gleichzeitig laufen. Der Tailscale-Serve-Endpunkt leitet auf `matrix-proxy:8080`.
 
 ## Hinweise
 
@@ -72,7 +88,7 @@ podman compose \
 - Docker-spezifische Mechanismen aus der Legacy-Datei wie `include`, `!reset` und `host-gateway` wurden bewusst entfernt, damit die Dateien für Podman Compose standardnäher bleiben.
 - Für öffentliche Exposition setzt [compose.override.public.yml](/home/alex/Programme/Container/N8nAnwendung/compose/compose.override.public.yml) weiterhin eine vorhandene [Caddyfile](/home/alex/Programme/Container/N8nAnwendung/Caddyfile) und ein Verzeichnis [caddy-addon](/home/alex/Programme/Container/N8nAnwendung/caddy-addon) voraus.
 - [compose.override.supabase.yml](/home/alex/Programme/Container/N8nAnwendung/compose/compose.override.supabase.yml) ist aktuell nur ein Platzhalter, weil die Supabase-Compose-Dateien laut Plan noch direkt ins Projekt übernommen werden müssen.
-- Der Matrix-Tailscale-Auth-Key gehoert in `.env` oder eine spaetere Secret-Verwaltung und darf nicht in diese README oder Compose-Dateien geschrieben werden.
+- Der Tailscale-Auth-Key gehoert in `.env` oder eine spaetere Secret-Verwaltung und darf nicht in diese README oder Compose-Dateien geschrieben werden.
 - Nach dem ersten erfolgreichen Matrix-Start koennen Admin- und Bot-Nutzer im Synapse-Container angelegt werden:
 
 ```sh

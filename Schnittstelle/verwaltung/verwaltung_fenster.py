@@ -22,6 +22,7 @@ DIENSTE = [
     DienstDefinition("immich", "Immich", ("immich-server",)),
     DienstDefinition("matrix-synapse", "Matrix Synapse", ("matrix-synapse", "synapse")),
     DienstDefinition("matrix-element", "Element Web", ("matrix-element", "element")),
+    DienstDefinition("tailscale", "Tailscale", ("tailscale",)),
 ]
 
 
