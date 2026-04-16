@@ -1,7 +1,7 @@
 # Valkey instance used by Langfuse.
 
 volumes:
-  valkey_data:
+  valkey_storage:
 
 services:
   redis:
@@ -12,7 +12,7 @@ services:
     expose:
       - 6379/tcp
     volumes:
-      - valkey_data:/data
+      - valkey_storage:/data
     healthcheck:
       test:
         - CMD
