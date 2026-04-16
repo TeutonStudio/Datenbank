@@ -1,5 +1,8 @@
 # Neo4j graph database.
 
+volumnes:
+  neo4j_storage:
+
 services:
   neo4j:
     image: neo4j:latest
@@ -18,7 +21,7 @@ services:
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*
       - NEO4J_dbms_security_procedures_allowlist=apoc.*
     volumes:
-      - ../neo4j/logs:/logs:Z
-      - ../neo4j/config:/config:Z
-      - ../neo4j/data:/data:Z
-      - ../neo4j/plugins:/plugins:Z
+      - neo4j_storage:/data
+      - neo4j_storage:/logs
+      - neo4j_storage:/config
+      - neo4j_storage:/plugins
