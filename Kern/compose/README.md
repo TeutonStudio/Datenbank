@@ -52,9 +52,30 @@ podman compose \
   up -d
 ```
 
+Für Matrix/Synapse werden Synapse, eigener Postgres, Element Web, ein interner
+Caddy-Proxy und ein eigener Tailscale-Container geladen:
+
+```sh
+podman compose \
+  -f compose/compose.yml \
+  -f compose/compose.override.matrix-postgres.yml \
+  -f compose/compose.override.matrix-synapse.yml \
+  -f compose/compose.override.matrix-element.yml \
+  -f compose/compose.override.matrix-tailscale.yml \
+  -f compose/compose.override.matrix-proxy.yml \
+  up -d
+```
+
 ## Hinweise
 
 - `compose.override.private.yml` und `compose.override.public.yml` sind alternative Overlays und sollten nicht gemeinsam geladen werden.
 - Docker-spezifische Mechanismen aus der Legacy-Datei wie `include`, `!reset` und `host-gateway` wurden bewusst entfernt, damit die Dateien für Podman Compose standardnäher bleiben.
 - Für öffentliche Exposition setzt [compose.override.public.yml](/home/alex/Programme/Container/N8nAnwendung/compose/compose.override.public.yml) weiterhin eine vorhandene [Caddyfile](/home/alex/Programme/Container/N8nAnwendung/Caddyfile) und ein Verzeichnis [caddy-addon](/home/alex/Programme/Container/N8nAnwendung/caddy-addon) voraus.
 - [compose.override.supabase.yml](/home/alex/Programme/Container/N8nAnwendung/compose/compose.override.supabase.yml) ist aktuell nur ein Platzhalter, weil die Supabase-Compose-Dateien laut Plan noch direkt ins Projekt übernommen werden müssen.
+- Der Matrix-Tailscale-Auth-Key gehoert in `.env` oder eine spaetere Secret-Verwaltung und darf nicht in diese README oder Compose-Dateien geschrieben werden.
+- Nach dem ersten erfolgreichen Matrix-Start koennen Admin- und Bot-Nutzer im Synapse-Container angelegt werden:
+
+```sh
+podman exec -it matrix-synapse sh -lc 'register_new_matrix_user -u alexander -a -k "$MATRIX_REGISTRATION_SHARED_SECRET" http://localhost:8008'
+podman exec -it matrix-synapse sh -lc 'register_new_matrix_user -u selatrix -k "$MATRIX_REGISTRATION_SHARED_SECRET" http://localhost:8008'
+```

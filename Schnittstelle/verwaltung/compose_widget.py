@@ -38,6 +38,8 @@ DIENSTE = [
     DienstDefinition("supabase", "Supabase Studio", ("studio", "supabase-studio")),
     DienstDefinition("ollama", "Ollama", ("ollama", "ollama-cpu", "ollama-gpu", "ollama-gpu-amd")),
     DienstDefinition("immich", "Immich", ("immich-server",)),
+    DienstDefinition("matrix-synapse", "Matrix Synapse", ("matrix-synapse", "synapse")),
+    DienstDefinition("matrix-element", "Element Web", ("matrix-element", "element")),
 ]
 
 

@@ -67,6 +67,20 @@ class Umgebungsvariablen:
         "supabase": ("compose.override.supabase.yml",),
         "ollama": ("compose.override.ollama.yml",),
         "immich": ("compose.override.immich.yml",),
+        "matrix-synapse": (
+            "compose.override.matrix-postgres.yml",
+            "compose.override.matrix-synapse.yml",
+            "compose.override.matrix-element.yml",
+            "compose.override.matrix-tailscale.yml",
+            "compose.override.matrix-proxy.yml",
+        ),
+        "matrix-element": (
+            "compose.override.matrix-postgres.yml",
+            "compose.override.matrix-synapse.yml",
+            "compose.override.matrix-element.yml",
+            "compose.override.matrix-tailscale.yml",
+            "compose.override.matrix-proxy.yml",
+        ),
     }
 
     DIENST_ZUSAETZLICHE_DEFINITIONEN: dict[str, tuple[UmgebungsvariableDefinition, ...]] = {
@@ -141,6 +155,94 @@ class Umgebungsvariablen:
                 dienst_ids=("immich",),
                 hat_standardwert=True,
                 standardwert="2283",
+            ),
+        ),
+        "matrix-synapse": (
+            UmgebungsvariableDefinition(
+                "MATRIX_SERVER_NAME",
+                dienst_ids=("matrix-synapse",),
+                hat_standardwert=True,
+                standardwert="selatrix.huchen-pirate.ts.net",
+            ),
+            UmgebungsvariableDefinition(
+                "MATRIX_PUBLIC_BASEURL",
+                dienst_ids=("matrix-synapse",),
+                hat_standardwert=True,
+                standardwert="https://selatrix.huchen-pirate.ts.net",
+            ),
+            UmgebungsvariableDefinition(
+                "MATRIX_SYNAPSE_PRIVATE_PORT",
+                dienst_ids=("matrix-synapse",),
+                hat_standardwert=True,
+                standardwert="8010",
+            ),
+            UmgebungsvariableDefinition(
+                "MATRIX_ELEMENT_PRIVATE_PORT",
+                dienst_ids=("matrix-synapse",),
+                hat_standardwert=True,
+                standardwert="8011",
+            ),
+            UmgebungsvariableDefinition(
+                "MATRIX_PROXY_PRIVATE_PORT",
+                dienst_ids=("matrix-synapse",),
+                hat_standardwert=True,
+                standardwert="8012",
+            ),
+            UmgebungsvariableDefinition(
+                "MATRIX_ELEMENT_HOSTNAME",
+                dienst_ids=("matrix-synapse",),
+                hat_standardwert=True,
+                standardwert="http://localhost:8011",
+            ),
+            UmgebungsvariableDefinition(
+                "TAILSCALE_HOSTNAME",
+                dienst_ids=("matrix-synapse",),
+                hat_standardwert=True,
+                standardwert="selatrix",
+            ),
+        ),
+        "matrix-element": (
+            UmgebungsvariableDefinition(
+                "MATRIX_SERVER_NAME",
+                dienst_ids=("matrix-element",),
+                hat_standardwert=True,
+                standardwert="selatrix.huchen-pirate.ts.net",
+            ),
+            UmgebungsvariableDefinition(
+                "MATRIX_PUBLIC_BASEURL",
+                dienst_ids=("matrix-element",),
+                hat_standardwert=True,
+                standardwert="https://selatrix.huchen-pirate.ts.net",
+            ),
+            UmgebungsvariableDefinition(
+                "MATRIX_SYNAPSE_PRIVATE_PORT",
+                dienst_ids=("matrix-element",),
+                hat_standardwert=True,
+                standardwert="8010",
+            ),
+            UmgebungsvariableDefinition(
+                "MATRIX_ELEMENT_PRIVATE_PORT",
+                dienst_ids=("matrix-element",),
+                hat_standardwert=True,
+                standardwert="8011",
+            ),
+            UmgebungsvariableDefinition(
+                "MATRIX_PROXY_PRIVATE_PORT",
+                dienst_ids=("matrix-element",),
+                hat_standardwert=True,
+                standardwert="8012",
+            ),
+            UmgebungsvariableDefinition(
+                "MATRIX_ELEMENT_HOSTNAME",
+                dienst_ids=("matrix-element",),
+                hat_standardwert=True,
+                standardwert="http://localhost:8011",
+            ),
+            UmgebungsvariableDefinition(
+                "TAILSCALE_HOSTNAME",
+                dienst_ids=("matrix-element",),
+                hat_standardwert=True,
+                standardwert="selatrix",
             ),
         ),
     }

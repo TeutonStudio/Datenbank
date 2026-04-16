@@ -5,11 +5,16 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 
 from Kern.compose.env import Umgebungsvariablen
 
 PROJEKT_NAME = "selatrix"
 _AUSGEWAEHLTE_DIENSTE_SCHLUESSEL = "ausgewaehlte_dienst_ids"
+_SENSIBLE_ENV_PATTERN = re.compile(
+    r"(PASSWORD|SECRET|TOKEN|AUTH|ENCRYPTION_KEY|MACAROON|FORM_SECRET|SALT)",
+)
+_SENSIBLER_WERT_MARKER = "<redacted>"
 
 
 @dataclass(frozen=True)
@@ -23,7 +28,9 @@ class PodmanComposeStartKonfiguration:
         return {
             "dienst_ids": list(self.dienst_ids),
             "compose_dateien": list(_serialisiere_compose_dateien(self.compose_dateien)),
-            "umgebungsvariablen": dict(sorted(self.umgebungsvariablen.items())),
+            "umgebungsvariablen": _serialisiere_umgebungsvariablen(
+                self.umgebungsvariablen
+            ),
             "profile": list(self.profile),
         }
 
@@ -208,6 +215,20 @@ def _deserialisiere_compose_datei(datei: str) -> Path:
     if pfad.is_absolute():
         return pfad
     return (Umgebungsvariablen.COMPOSE_VERZEICHNIS.parent / pfad).resolve()
+
+
+def _serialisiere_umgebungsvariablen(umgebungsvariablen: dict[str, str]) -> dict[str, str]:
+    serialisiert: dict[str, str] = {}
+    for name, wert in sorted(umgebungsvariablen.items()):
+        if _ist_sensible_umgebungsvariable(name) and wert:
+            serialisiert[name] = _SENSIBLER_WERT_MARKER
+            continue
+        serialisiert[name] = wert
+    return serialisiert
+
+
+def _ist_sensible_umgebungsvariable(name: str) -> bool:
+    return bool(_SENSIBLE_ENV_PATTERN.search(name.upper()))
 
 
 def _lade_status_daten(pfad: Path) -> dict[str, object]:

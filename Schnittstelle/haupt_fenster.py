@@ -19,6 +19,7 @@ PROGRAMM_SEITEN = [
     ("MinIO", "http://localhost:9011"),
     ("Immich", "http://localhost:2283"),
     ("Ollama", "http://localhost:11435"),
+    ("Element", "http://localhost:8011"),
 ]
 
 
