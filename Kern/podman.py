@@ -8,7 +8,7 @@ from pathlib import Path
 
 from Kern.compose.env import Umgebungsvariablen
 
-PROJEKT_NAME = "n8nanwendung"
+PROJEKT_NAME = "selatrix"
 _AUSGEWAEHLTE_DIENSTE_SCHLUESSEL = "ausgewaehlte_dienst_ids"
 
 

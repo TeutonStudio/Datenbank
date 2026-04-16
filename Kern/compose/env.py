@@ -102,6 +102,8 @@ class Umgebungsvariablen:
             ),
         ),
         "neo4j": (
+            # UmgebungsvariableDefinition("NEO4J_USER", dienst_ids=("neo4j",)),
+            UmgebungsvariableDefinition("NEO4J_PASSWORD", dienst_ids=("neo4j",)),
             UmgebungsvariableDefinition(
                 "NEO4J_HOSTNAME",
                 dienst_ids=("neo4j",),
@@ -144,6 +146,7 @@ class Umgebungsvariablen:
     }
 
     _VARIABLE_PATTERN = re.compile(r"\$\{([A-Z][A-Z0-9_]*)(?:(:?[-+?])([^}]*))?\}")
+    _ABGELEITETE_VARIABLEN = {"NEO4J_AUTH"}
 
     def __init__(self, env_pfad: Path, cache_pfad: Path):
         self._env_pfad = env_pfad
@@ -227,6 +230,10 @@ class Umgebungsvariablen:
             if entwurf_bevorzugen and self._cache_pfad.exists()
             else self._lade_zeilen(self._env_pfad)
         )
+        geladene_variablen = self._normalisiere_geladene_variablen(
+            geladene_variablen,
+            definitionen_nach_name,
+        )
 
         variablen: list[Umgebungsvariable] = []
         vorhandene_namen: set[str] = set()
@@ -299,9 +306,10 @@ class Umgebungsvariablen:
         *,
         entwurf_bevorzugen: bool = False,
     ) -> dict[str, str]:
+        dienst_id_menge = set(dienst_ids)
         werte: dict[str, str] = {}
         for variable in self.variablen_fuer_dienste(
-            dienst_ids,
+            dienst_id_menge,
             entwurf_bevorzugen=entwurf_bevorzugen,
         ):
             if not variable.name:
@@ -310,6 +318,13 @@ class Umgebungsvariablen:
             if effektiver_wert is None:
                 continue
             werte[variable.name] = effektiver_wert
+
+        if "neo4j" in dienst_id_menge:
+            # neo4j_user = werte.get("NEO4J_USER")
+            neo4j_user = "neo4j"
+            neo4j_passwort = werte.get("NEO4J_PASSWORD")
+            if neo4j_user and neo4j_passwort:
+                werte["NEO4J_AUTH"] = f"{neo4j_user}/{neo4j_passwort}"
         return werte
 
     @classmethod
@@ -357,6 +372,8 @@ class Umgebungsvariablen:
         for zeile in inhalt.splitlines():
             for treffer in cls._VARIABLE_PATTERN.finditer(zeile):
                 name = treffer.group(1)
+                if name in cls._ABGELEITETE_VARIABLEN:
+                    continue
                 operator = treffer.group(2) or ""
                 standardwert = treffer.group(3)
                 vorhanden = definitionen.get(name)
@@ -411,6 +428,61 @@ class Umgebungsvariablen:
             for _name, definition in sorted(zusammengefuehrt.items())
         )
 
+    @classmethod
+    def _normalisiere_geladene_variablen(
+        cls,
+        geladene_variablen: list[Umgebungsvariable],
+        definitionen_nach_name: dict[str, UmgebungsvariableDefinition],
+    ) -> list[Umgebungsvariable]:
+        vorhandene_namen = {variable.name for variable in geladene_variablen}
+        ergaenzte_variablen: list[Umgebungsvariable] = []
+
+        for variable in geladene_variablen:
+            if variable.name in cls._ABGELEITETE_VARIABLEN:
+                cls._ergaenze_neo4j_zugang_aus_auth(
+                    variable.wert,
+                    vorhandene_namen,
+                    ergaenzte_variablen,
+                    definitionen_nach_name,
+                )
+                continue
+            ergaenzte_variablen.append(variable)
+
+        return ergaenzte_variablen
+
+    @staticmethod
+    def _ergaenze_neo4j_zugang_aus_auth(
+        neo4j_auth: str,
+        vorhandene_namen: set[str],
+        variablen: list[Umgebungsvariable],
+        definitionen_nach_name: dict[str, UmgebungsvariableDefinition],
+    ) -> None:
+        if "/" not in neo4j_auth:
+            return
+
+        benutzer, passwort = neo4j_auth.split("/", 1)
+        werte = {
+            "NEO4J_USER": benutzer,
+            "NEO4J_PASSWORD": passwort,
+        }
+        for name, wert in werte.items():
+            if name in vorhandene_namen:
+                continue
+            definition = definitionen_nach_name.get(name)
+            if definition is None:
+                variablen.append(Umgebungsvariable(name=name, wert=wert))
+                continue
+            variablen.append(
+                Umgebungsvariable(
+                    name=name,
+                    wert=wert,
+                    dienst_ids=definition.dienst_ids,
+                    hat_standardwert=definition.hat_standardwert,
+                    standardwert=definition.standardwert,
+                    dateien=definition.dateien,
+                )
+            )
+
     @staticmethod
     def _lade_zeilen(pfad: Path) -> list[Umgebungsvariable]:
         if not pfad.exists():
@@ -452,6 +524,8 @@ class Umgebungsvariablen:
     def _schreibe_zeilen(pfad: Path, variablen: Iterable[Umgebungsvariable]) -> None:
         daten = []
         for variable in variablen:
+            if variable.name in Umgebungsvariablen._ABGELEITETE_VARIABLEN:
+                continue
             if not variable.name and not variable.wert:
                 continue
             daten.append(
@@ -475,6 +549,8 @@ class Umgebungsvariablen:
     def _schreibe_env(pfad: Path, variablen: Iterable[Umgebungsvariable]) -> None:
         zeilen = []
         for variable in variablen:
+            if variable.name in Umgebungsvariablen._ABGELEITETE_VARIABLEN:
+                continue
             if not variable.name and not variable.wert:
                 continue
             zeilen.append(f"{variable.name}={variable.wert}")

@@ -3,10 +3,11 @@ from PyQt6.QtWidgets import QGridLayout, QMainWindow, QStackedWidget, QStatusBar
 
 from Schnittstelle.horizontale_leiste import HorizontaleLeiste
 from Schnittstelle.vertikale_leiste import VertikaleLeiste
+from Schnittstelle.verwaltung.ollama_widget import OllamaWidget
 from Schnittstelle.verwaltung.verwaltung_fenster import VerwaltungFenster
 from Schnittstelle.verwaltung.web_widget import ProgrammSeite
 
-PROGRAMM_NAME = "N8N Verwalter"
+PROGRAMM_NAME = "Selatrix"
 PROGRAMM_SEITEN = [
     ("Verwaltung", None),
     ("N8N", "http://localhost:5678"),
@@ -59,6 +60,9 @@ class FensterLayout(QGridLayout):
         for titel, url in PROGRAMM_SEITEN:
             if url is None:
                 self.stackedWidget.addWidget(VerwaltungFenster(self.stackedWidget))
+                continue
+            if titel == "Ollama":
+                self.stackedWidget.addWidget(OllamaWidget(self.stackedWidget))
                 continue
             self.stackedWidget.addWidget(ProgrammSeite(url, self.stackedWidget))
 

@@ -28,6 +28,7 @@ class PodmanProzessDialog(QDialog):
         umgebung: dict[str, str],
         *,
         timeout: int,
+        prozess_name: str = "Podman Compose",
         parent=None,
     ):
         super().__init__(parent)
@@ -35,6 +36,7 @@ class PodmanProzessDialog(QDialog):
         self._arbeitsverzeichnis = arbeitsverzeichnis
         self._umgebung = umgebung
         self._timeout = timeout
+        self._prozess_name = prozess_name
         self._ausgabe: list[str] = []
         self._abgeschlossen_callback: AbgeschlossenCallback | None = None
         self._zeitlimit_erreicht = False
@@ -45,7 +47,7 @@ class PodmanProzessDialog(QDialog):
         self.resize(900, 560)
 
         layout = QVBoxLayout(self)
-        self.status_label = QLabel("Podman Compose wird ausgeführt ...", self)
+        self.status_label = QLabel(f"{self._prozess_name} wird ausgeführt ...", self)
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
@@ -173,10 +175,10 @@ class PodmanProzessDialog(QDialog):
             and exit_code == 0
         )
         if erfolgreich:
-            self.status_label.setText("Podman Compose wurde erfolgreich beendet.")
+            self.status_label.setText(f"{self._prozess_name} wurde erfolgreich beendet.")
         else:
             self.status_label.setText(
-                f"Podman Compose ist fehlgeschlagen. Exit-Code: {exit_code}"
+                f"{self._prozess_name} ist fehlgeschlagen. Exit-Code: {exit_code}"
             )
 
         self.abbrechen_button.setEnabled(False)

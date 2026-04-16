@@ -1,5 +1,8 @@
 # SearXNG metasearch service.
 
+volumes:
+  searxng_cache:
+
 services:
   searxng:
     image: docker.io/searxng/searxng:latest
@@ -11,6 +14,7 @@ services:
       - 127.0.0.1:${SEARXNG_PRIVATE_PORT:-8081}:8080
     volumes:
       - ../searxng:/etc/searxng:Z
+      - searxng_cache:/var/cache/searxng
     environment:
       - SEARXNG_BASE_URL=https://${SEARXNG_HOSTNAME:-localhost}/
       - UWSGI_WORKERS=${SEARXNG_UWSGI_WORKERS:-4}

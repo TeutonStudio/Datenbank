@@ -352,141 +352,226 @@ Abnahmekriterien:
 
 ### Synapse und Matrix implementieren
 
+Geklaerte Zielrichtung:
+
+- Der Matrix-Server soll primaer privat ueber Tailscale erreichbar sein, aehnlich wie Immich.
+- Eine eigene gekaufte Domain ist fuer diesen privaten Betrieb nicht notwendig.
+- Als stabiler Matrix-Servername soll ein vollstaendiger Tailscale-Name verwendet werden, zum Beispiel `selatrix.<tailnet>.ts.net`.
+- Der reine Kurzname `selatrix` sollte nicht als `server_name` verwendet werden, weil Matrix-IDs und Client-Autodiscovery mit einem stabilen vollstaendigen Namen robuster sind.
+- Eine gekaufte Domain wird erst relevant, wenn spaeter oeffentliche Federation, ein schoenerer Matrix-Name wie `@user:selatrix.de` oder Zugriff ohne Tailscale gewuenscht ist.
+- Element Web soll mit eingeplant werden, damit Matrix direkt in der Anwendung nutzbar ist.
+- Registrierung soll Invite-only beziehungsweise admin-kontrolliert sein.
+- Der Server soll fuer Kommunikation mit n8n nutzbar sein. Dafuer wird ein eigener Matrix-Bot/API-Nutzer fuer n8n eingeplant.
+- Direkte Nutzer-zu-Nutzer-Kommunikation soll innerhalb des privaten Servers moeglich sein.
+- VoIP, Anrufe und Sprachnachrichten sind aktuell nicht Ziel der Umsetzung. TURN/coturn wird deshalb nicht initial installiert.
+- E-Mail soll eingeplant werden, vor allem fuer Passwort-Reset, Verifikation und Benachrichtigungen.
+- Persistenz soll ueber eigene Podman-Volumes laufen, nicht ueber Bind-Mounts in den Projektbaum.
+
 Ziel:
 
-- Der Stack soll um einen Matrix-Homeserver auf Basis von Synapse erweitert werden.
+- Der Stack soll um einen privaten Matrix-Homeserver auf Basis von Synapse erweitert werden.
 - Die Integration soll dieselben Mechanismen nutzen wie die vorhandenen Dienste:
   - zentraler Dienstkatalog
   - Compose-Override
   - Env-Verwaltung
   - Containerstatus
-  - Web-/Adminseite, falls vorhanden
-  - persistente Datenverzeichnisse
-  - private/public Overlay-Strategie
+  - Logausgabe
+  - eingebettete Weboberflaeche ueber Element Web
+  - eigene Podman-Volumes fuer persistente Daten
+  - klare Trennung zwischen privatem Tailscale-Betrieb und spaeterem Public/Federation-Betrieb
 
 Geplante Dienststruktur:
 
-- Dienst-ID: `matrix-synapse`
+- Dienst-ID fuer Synapse: `matrix-synapse`
 - Anzeigename: `Matrix Synapse`
-- Hauptcontainer: `synapse`
-- Datenbank: eigener Postgres-Dienst, zum Beispiel `synapse-postgres`
-- Persistenz:
-  - `../matrix/synapse/data:/data`
-  - `../matrix/postgres:/var/lib/postgresql/data`
+- Hauptcontainer: `matrix-synapse`
+- Datenbankcontainer: `matrix-postgres`
+- Webclient-Dienst-ID: `matrix-element`
+- Webclient-Anzeigename: `Element Web`
 - Interne Synapse-Ports:
   - Client-Server API: `8008`
-  - optional Federation: `8448`
+  - Federation-Port `8448` wird initial nicht veroeffentlicht
 - Lokale private Veroeffentlichung:
-  - Standard-Webwert zum Beispiel `MATRIX_SYNAPSE_HOSTNAME=:8010`
-- Oeffentliche Veroeffentlichung:
-  - ueber `compose.override.public.yml` oder spaeter Caddy/Reverse-Proxy
-  - Servername und `.well-known/matrix/*` muessen dabei explizit beruecksichtigt werden.
+  - Synapse lokal: `127.0.0.1:${MATRIX_SYNAPSE_PRIVATE_PORT:-8010}:8008`
+  - Element lokal: `127.0.0.1:${MATRIX_ELEMENT_PRIVATE_PORT:-8011}:80`
+- Tailscale-Zugriff:
+  - bevorzugt ueber Tailscale Serve oder einen Host-Reverse-Proxy auf `https://selatrix.<tailnet>.ts.net`
+  - Synapse-Client-API unter `https://selatrix.<tailnet>.ts.net/_matrix`
+  - Element Web unter einer eigenen Route oder einem eigenen Namen, zum Beispiel `https://element.<tailnet>.ts.net`
+- Oeffentliche Federation:
+  - wird nicht initial umgesetzt
+  - bleibt als spaeteres Public-Overlay moeglich
 
 Neue Compose-Dateien:
 
 1. `Kern/compose/compose.override.matrix-postgres.yml`
-   - Postgres fuer Synapse
-   - Healthcheck
-   - eigenes Volume oder Bind-Mount unter `../matrix/postgres`
+   - eigener Postgres-Dienst fuer Synapse
+   - eigener Podman-Volume `matrix_postgres_data`
+   - Healthcheck mit `pg_isready`
+   - Datenbank muss UTF-8-kompatibel angelegt werden
    - Variablen:
      - `MATRIX_POSTGRES_DB`
      - `MATRIX_POSTGRES_USER`
      - `MATRIX_POSTGRES_PASSWORD`
+     - `MATRIX_POSTGRES_VERSION`
 2. `Kern/compose/compose.override.matrix-synapse.yml`
-   - Synapse-Container
-   - Abhaengigkeit von `synapse-postgres`
-   - Mount fuer `/data`
-   - lokale Portbindung fuer `8008`
-   - optional Federation-Port
+   - Synapse-Container mit offiziellem Image `matrixdotorg/synapse`
+   - eigener Podman-Volume `matrix_synapse_data` fuer `/data`
+   - Abhaengigkeit von `matrix-postgres`
+   - Healthcheck gegen `http://localhost:8008/health`
+   - keine automatische Ueberschreibung von `/data/homeserver.yaml`
    - Variablen:
      - `MATRIX_SERVER_NAME`
+     - `MATRIX_PUBLIC_BASEURL`
      - `MATRIX_SYNAPSE_REPORT_STATS`
-     - `MATRIX_SYNAPSE_REGISTRATION_SHARED_SECRET`
-     - `MATRIX_SYNAPSE_MACAROON_SECRET_KEY`
-     - `MATRIX_SYNAPSE_FORM_SECRET`
-     - `MATRIX_SYNAPSE_SIGNING_KEY_PATH`
-     - `MATRIX_SYNAPSE_HOSTNAME`
+     - `MATRIX_REGISTRATION_SHARED_SECRET`
+     - `MATRIX_MACAROON_SECRET_KEY`
+     - `MATRIX_FORM_SECRET`
+     - `MATRIX_SYNAPSE_PRIVATE_PORT`
+3. `Kern/compose/compose.override.matrix-element.yml`
+   - Element-Web-Container
+   - eigener statischer Element-Konfigurations-Mount oder generierte Konfiguration
+   - Homeserver-URL zeigt auf `MATRIX_PUBLIC_BASEURL`
+   - lokaler Port ueber `MATRIX_ELEMENT_PRIVATE_PORT`
 
 Initialisierung:
 
 1. Einen vorbereitenden Schritt fuer Synapse-Konfiguration definieren.
-2. Beim ersten Start muss `homeserver.yaml` erzeugt oder aus einer Vorlage generiert werden.
-3. Die Generierung darf nicht bei jedem Start bestehende Konfiguration ueberschreiben.
-4. Servername, Datenbankverbindung, Secrets und Public-Base-URL muessen aus `.env` kommen.
-5. Signing-Key und Medien-/Upload-Daten muessen persistent unter `../matrix/synapse/data` bleiben.
+2. Beim ersten Start muss `/data/homeserver.yaml` erzeugt werden.
+3. Die Generierung darf nur laufen, wenn noch keine `homeserver.yaml` existiert.
+4. Die generierte Konfiguration muss danach fuer Postgres, `public_baseurl`, Invite-only/Registration, E-Mail und Secrets angepasst werden.
+5. Signing-Key, Medien, Uploads und Konfiguration bleiben im Podman-Volume `matrix_synapse_data`.
+6. Der initiale Admin-Nutzer wird nach dem ersten erfolgreichen Start per `register_new_matrix_user` erzeugt.
+7. Danach wird ein eigener n8n-Bot-Nutzer erzeugt, dessen Access Token in `.env` oder in einer spaeteren Secret-Verwaltung abgelegt wird.
+
+Invite-only und Nutzer:
+
+1. Offene Registrierung bleibt deaktiviert.
+2. Neue Nutzer werden durch Admin-Aktion oder eine kontrollierte Invite-/Registrierungslogik angelegt.
+3. Fuer n8n wird ein eigener Nutzer eingeplant, zum Beispiel `@n8n:selatrix.<tailnet>.ts.net`.
+4. n8n kann ueber die Matrix Client-Server API Nachrichten senden und Raeume/Direct Messages nutzen.
+5. Direkte Kommunikation zwischen menschlichen Nutzern laeuft ueber Element Web oder mobile Matrix-Clients, solange diese den Tailscale-Namen erreichen.
+
+E-Mail:
+
+1. Synapse bekommt SMTP-Konfiguration ueber `.env`.
+2. Benoetigte Variablen:
+   - `MATRIX_SMTP_HOST`
+   - `MATRIX_SMTP_PORT`
+   - `MATRIX_SMTP_USER`
+   - `MATRIX_SMTP_PASSWORD`
+   - `MATRIX_SMTP_FROM`
+   - `MATRIX_SMTP_TLS`
+3. Ohne gueltige SMTP-Daten soll der Dienst lokal startbar bleiben, aber Passwort-Reset und Benachrichtigungen werden dann als nicht konfiguriert markiert.
 
 Dienstkatalog-Erweiterung:
 
 1. `matrix-synapse` in den zentralen Dienstkatalog aufnehmen.
-2. Compose-Dateien zuordnen:
+2. `matrix-element` in den zentralen Dienstkatalog aufnehmen.
+3. Compose-Dateien zuordnen:
    - `compose.override.matrix-postgres.yml`
    - `compose.override.matrix-synapse.yml`
-3. Container-Aliase zuordnen:
-   - `synapse`
+   - `compose.override.matrix-element.yml`
+4. Container-Aliase zuordnen:
    - `matrix-synapse`
-   - `synapse-postgres`
-4. Webeintrag definieren:
-   - Titel: `Matrix Synapse`
-   - URL aus `MATRIX_SYNAPSE_HOSTNAME`
-   - Auth-Modus: `keine` oder `formular/manuell`, weil Synapse selbst primaer API-Dienst ist.
-5. Optional einen zweiten Matrix-Webclient-Dienst spaeter ergaenzen, zum Beispiel Element Web, damit die Matrix-Nutzung direkt in der Anwendung sichtbar ist.
+   - `synapse`
+   - `matrix-postgres`
+   - `matrix-element`
+   - `element`
+5. Webeintrag fuer Element Web definieren:
+   - Titel: `Element`
+   - URL aus `MATRIX_ELEMENT_HOSTNAME` oder lokal `http://localhost:8011`
+   - Auth-Modus: `formular/manuell`
+6. Synapse selbst bleibt primaer API-Dienst. Eine eigene Detailseite kann spaeter Status, Servername und Federation-Hinweise anzeigen.
 
 Env-Verwaltung:
 
-1. Pflichtvariablen fuer Matrix/Synapse ergaenzen:
+1. Pflichtvariablen fuer Matrix/Synapse:
    - `MATRIX_SERVER_NAME`
+   - `MATRIX_PUBLIC_BASEURL`
    - `MATRIX_POSTGRES_PASSWORD`
-   - `MATRIX_SYNAPSE_REGISTRATION_SHARED_SECRET`
-   - `MATRIX_SYNAPSE_MACAROON_SECRET_KEY`
-   - `MATRIX_SYNAPSE_FORM_SECRET`
+   - `MATRIX_REGISTRATION_SHARED_SECRET`
+   - `MATRIX_MACAROON_SECRET_KEY`
+   - `MATRIX_FORM_SECRET`
 2. Standardwerte nur fuer ungefaehrliche lokale Werte setzen:
    - `MATRIX_POSTGRES_DB=synapse`
    - `MATRIX_POSTGRES_USER=synapse`
+   - `MATRIX_POSTGRES_VERSION=16`
    - `MATRIX_SYNAPSE_REPORT_STATS=no`
-   - `MATRIX_SYNAPSE_HOSTNAME=:8010`
-3. Secrets muessen vom Nutzer gesetzt oder durch eine spaetere sichere Generatorfunktion erzeugt werden.
-4. Der Einstellungen-Dialog muss diese Variablen automatisch anzeigen, sobald `matrix-synapse` ausgewaehlt ist.
+   - `MATRIX_SYNAPSE_PRIVATE_PORT=8010`
+   - `MATRIX_ELEMENT_PRIVATE_PORT=8011`
+3. Secrets muessen vom Nutzer gesetzt oder durch eine sichere Generatorfunktion erzeugt werden.
+4. `.compose.state.json` darf langfristig keine Secrets im Klartext persistieren. Vor Matrix sollte die Persistenz der effektiven Umgebungsvariablen ueberarbeitet werden.
+5. Der Einstellungen-Dialog muss die Variablen anzeigen, sobald Matrix ausgewaehlt ist.
 
 UI-Integration:
 
 1. Matrix/Synapse als optionalen Dienst in der Verwaltung anzeigen.
-2. Status fuer Synapse und Postgres aus Container-Aliasen erkennen.
-3. Logs fuer den Synapse-Container anzeigen.
-4. Webnavigation nur aktivieren, wenn ein sinnvoller Endpunkt definiert ist.
-5. Optional spaeter eigene Matrix-Detailseite bauen:
+2. Element Web als optionalen oder automatisch mit Matrix aktivierten Dienst anzeigen.
+3. Status fuer Synapse, Matrix-Postgres und Element aus Container-Aliasen erkennen.
+4. Logs fuer Synapse und Element anzeigen.
+5. Webnavigation fuer Element Web aktivieren.
+6. Optional spaeter eigene Matrix-Detailseite bauen:
    - Servername
+   - Public Base URL
+   - Tailscale-Hinweis
    - Registrierungsstatus
-   - Federation-Hinweise
-   - Link zu Admin/API-Dokumentation
-   - Link zu Element Web, falls installiert
+   - SMTP-Status
+   - n8n-Bot-Status
+   - Federation-Hinweis
 
-Public/Federation-Planung:
+Tailscale- und Domain-Planung:
 
-1. Matrix muss fuer echte Nutzung sauber zwischen lokalem Testbetrieb und oeffentlichem Betrieb unterscheiden.
-2. Fuer oeffentlichen Betrieb werden benoetigt:
-   - stabiler `MATRIX_SERVER_NAME`
-   - TLS ueber Reverse Proxy
-   - Client-API unter `https://<server>/_matrix`
-   - Federation unter `8448` oder per Delegation
-   - `.well-known/matrix/server`
+1. Fuer den geplanten privaten Betrieb wird keine gekaufte Domain benoetigt.
+2. Voraussetzung ist, dass alle Clients, inklusive Handy und ggf. n8n-Host, im selben Tailnet sind oder den Tailscale-Endpunkt erreichen.
+3. Der Matrix-Servername sollte vor dem ersten Start final feststehen, weil er in Matrix-IDs und Signaturen eingeht.
+4. Empfohlener Wert:
+   - `MATRIX_SERVER_NAME=selatrix.<tailnet>.ts.net`
+   - `MATRIX_PUBLIC_BASEURL=https://selatrix.<tailnet>.ts.net`
+5. Wenn spaeter Federation mit fremden Matrix-Servern gewuenscht ist, muss die Architektur neu bewertet werden:
+   - eigene Domain oder stabiler oeffentlicher DNS-Name
+   - TLS
+   - Reverse Proxy
    - `.well-known/matrix/client`
-3. Diese Konfiguration gehoert nicht hart in die private lokale Compose-Datei, sondern in ein klares Public-Overlay.
+   - `.well-known/matrix/server`
+   - Federation-Port oder Delegation
+6. Tailscale Funnel waere eine moegliche spaetere Public-Option, macht den Dienst aber oeffentlich und passt nicht zum aktuellen privaten Ziel.
+
+Nicht initial umsetzen:
+
+- Keine Federation mit fremden Matrix-Servern.
+- Kein TURN/coturn.
+- Keine VoIP-/Anruf-Funktionen.
+- Keine offene Registrierung.
+- Keine harte Public-Caddy-Konfiguration, solange der Betrieb privat ueber Tailscale geplant ist.
+
+Vor Implementierung noch konkret festlegen:
+
+1. Exakter Tailscale-FQDN fuer den Server, zum Beispiel `selatrix.<tailnet>.ts.net`.
+2. Ob Synapse und Element unter demselben Tailscale-Namen mit unterschiedlichen Pfaden oder unter zwei Tailscale-Namen laufen sollen.
+3. SMTP-Anbieter und Zugangsdaten.
+4. Name des ersten Admin-Nutzers.
+5. Name des n8n-Bot-Nutzers.
+6. Backup-Strategie fuer die Podman-Volumes `matrix_synapse_data` und `matrix_postgres_data`.
 
 Abnahmekriterien:
 
 - `matrix-synapse` kann als optionaler Dienst ausgewaehlt werden.
+- `matrix-element` kann gestartet und in der App geoeffnet werden.
 - Die notwendigen Env-Variablen erscheinen im Einstellungen-Dialog.
-- `podman compose` startet Synapse mit Postgres.
-- Synapse-Daten, Konfiguration und Signing-Key bleiben persistent.
-- Containerstatus und Logs erscheinen in der Verwaltung.
-- Private lokale Nutzung funktioniert ohne Public-Overlay.
-- Oeffentliche Federation ist planerisch vorbereitet, aber nur aktiv, wenn Public-Konfiguration gesetzt ist.
+- `podman compose` startet Synapse mit eigenem Postgres.
+- Synapse-Daten, Konfiguration, Medien und Signing-Key bleiben in eigenen Podman-Volumes persistent.
+- Offene Registrierung ist deaktiviert.
+- Initialer Admin-Nutzer und n8n-Bot-Nutzer koennen angelegt werden.
+- n8n kann ueber den Bot-Nutzer Matrix-Nachrichten senden.
+- Private Nutzung funktioniert ueber Tailscale ohne gekaufte Domain.
+- VoIP, TURN und Public Federation bleiben bewusst deaktiviert.
 
 ### Weitere geplante Dienste und Ausbauten
 
 - `qdrant` als eigener Dienst sichtbar machen, weil die Compose-Datei bereits existiert.
 - Supabase vom Platzhalter in eine echte Compose-Integration ueberfuehren.
-- Optional Element Web als Matrix-Client ergaenzen.
+- Element Web zusammen mit Matrix als eingebetteten Client ergaenzen.
 - Optional Admin-/Monitoring-Seiten fuer Dienste mit API-Status ergaenzen.
 - Healthchecks aus Compose oder Dienstkatalog in der UI anzeigen.
 
@@ -498,13 +583,13 @@ Abnahmekriterien:
 4. `ComposeWidget` entflechten und Podman-Runtime auslagern.
 5. Auswahlmodell fuer Ausgabe und Auswahl-zuruecksetzen umsetzen.
 6. Projekt- und Git-Hygiene fuer Laufzeitdaten verbessern.
-7. Danach `matrix-synapse` im Dienstkatalog und in Compose ergaenzen.
-8. Danach optional Element Web als Matrix-Client einbauen.
+7. Danach `matrix-synapse` und `matrix-element` im Dienstkatalog und in Compose ergaenzen.
+8. Danach Matrix-Initialisierung, Admin-Nutzer und n8n-Bot-Nutzer automatisieren oder dokumentiert in der UI fuehren.
 
 ## Kritische Punkte
 
 - Synapse darf nicht ohne persistente Konfiguration gestartet werden, weil sonst Serveridentitaet und Keys verloren gehen koennen.
-- Matrix-Federation funktioniert nur mit sauberer Public-URL, TLS und Well-Known-Konfiguration.
+- Matrix-Federation funktioniert nur mit sauberer Public-URL, TLS und Well-Known-Konfiguration; sie ist fuer den Tailscale-Privatbetrieb nicht initial vorgesehen.
 - Secrets duerfen nicht in Git landen.
 - Die Env-Verwaltung darf nicht wieder auf UI-Module verteilt werden.
 - Neue Dienste sollten erst nach dem zentralen Dienstkatalog hinzugefuegt werden.
