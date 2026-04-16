@@ -1,7 +1,7 @@
 # Dedicated database for Langfuse.
 
 volumes:
-  langfuse_postgres_data:
+  langfuse_postgres_storage:
 
 services:
   postgres:
@@ -22,4 +22,4 @@ services:
       timeout: 3s
       retries: 10
     volumes:
-      - langfuse_postgres_data:/var/lib/postgresql/data
+      - langfuse_postgres_storage:/var/lib/postgresql/data
