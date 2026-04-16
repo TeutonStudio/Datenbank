@@ -1,0 +1,18 @@
+:8080 {
+	header /.well-known/matrix/* Content-Type application/json
+	header /.well-known/matrix/* Access-Control-Allow-Origin "*"
+
+	respond /.well-known/matrix/client `{"m.homeserver":{"base_url":"https://selatrix.huchen-pirate.ts.net"}}`
+
+	handle /_matrix* {
+		reverse_proxy matrix-synapse:8008
+	}
+
+	handle /_synapse/client* {
+		reverse_proxy matrix-synapse:8008
+	}
+
+	handle {
+		reverse_proxy matrix-element:8080
+	}
+}
