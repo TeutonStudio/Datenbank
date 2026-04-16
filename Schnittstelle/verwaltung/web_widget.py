@@ -1,29 +1,30 @@
-import sys
-import os
-import shutil
-import subprocess
-import json
-import socket
-import time
-import re
-import PyQt6
-
-from PyQt6 import (
-    QtWidgets, QtCore, QtGui, QtWebEngineWidgets
-)
-from PyQt6.QtWidgets import (
-    QApplication, QGridLayout, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QTableWidget, QTableWidgetItem, QPlainTextEdit, QPushButton, QMessageBox,
-    QHeaderView, QSplitter, QToolBar, QFileDialog, QDialog, QDialogButtonBox,
-    QLabel, QLineEdit, QListWidgetItem
-)
-from PyQt6.QtCore import QUrl, QTimer, Qt, QSize
-from PyQt6.QtGui import QAction, QFont, QIcon, QPixmap
+from PyQt6.QtCore import QUrl
+from PyQt6.QtWebEngineCore import QWebEnginePage
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 # TODO Websiten auth einbauen
 
+
+class StilleWebEnginePage(QWebEnginePage):
+    def javaScriptConsoleMessage(
+        self,
+        level: QWebEnginePage.JavaScriptConsoleMessageLevel,
+        message: str,
+        line_number: int,
+        source_id: str,
+    ) -> None:
+        return
+
+
 class ProgrammSeite(QWebEngineView):
     def __init__(self, url: str, parent=None):
         super().__init__(parent)
-        self.setUrl(QUrl(url))
+        self._url = QUrl(url)
+        self._geladen = False
+        self.setPage(StilleWebEnginePage(self))
+
+    def lade_wenn_noetig(self) -> None:
+        if self._geladen:
+            return
+        self._geladen = True
+        self.setUrl(self._url)

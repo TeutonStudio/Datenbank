@@ -66,6 +66,7 @@ class ComposeWidget(QSplitter):
         self._ausgewaehlter_container: str | None = None
         self._ausgewaehlter_dienst = "Kein Dienst ausgewählt"
         self._letzter_status_fehler = ""
+        self._aktualisierung_laeuft = False
         self._start_dialog: PodmanDialog | None = None
         self._prozess_dialoge: list[PodmanDialog] = []
 
@@ -110,12 +111,18 @@ class ComposeWidget(QSplitter):
         self.ausgabe_bereich.aktualisieren_angefragt.connect(self._aktualisiere_logs)
 
     def aktualisiere_inhalt(self) -> None:
-        self._aktualisiere_container()
-        self._aktualisiere_volumen()
-        self._aktualisiere_logs()
+        if self._aktualisierung_laeuft:
+            return
+        self._aktualisierung_laeuft = True
+        try:
+            self._aktualisiere_container()
+            self._aktualisiere_volumen()
+            self._aktualisiere_logs()
+        finally:
+            self._aktualisierung_laeuft = False
 
     def _aktualisiere_container(self) -> None:
-        container_rohdaten, fehler = self._lade_json_liste(["ps", "-a"])
+        container_rohdaten, fehler = self._lade_json_liste(["ps", "-a"], timeout=4)
         self._letzter_status_fehler = fehler
         self._container_status = self._status_nach_dienst(container_rohdaten)
         self._aktualisiere_containerdarstellung()
@@ -127,7 +134,8 @@ class ComposeWidget(QSplitter):
                 "ls",
                 "--filter",
                 f"label=com.docker.compose.project={PROJEKT_NAME}",
-            ]
+            ],
+            timeout=4,
         )
         volumen_liste = []
         for volumen in volumen_rohdaten:
@@ -154,7 +162,8 @@ class ComposeWidget(QSplitter):
             return
 
         ausgabe, fehler = self._fuehre_podman_kommando(
-            ["logs", "--tail", "200", self._ausgewaehlter_container]
+            ["logs", "--tail", "200", self._ausgewaehlter_container],
+            timeout=5,
         )
         if fehler:
             self.ausgabe_bereich.setze_ausgabe(fehler)
@@ -230,8 +239,16 @@ class ComposeWidget(QSplitter):
             )
             self._aktualisiere_containerdarstellung()
 
-    def _lade_json_liste(self, basis_befehl: list[str]) -> tuple[list[dict[str, Any]], str]:
-        daten, fehler = self._fuehre_podman_kommando([*basis_befehl, "--format", "json"])
+    def _lade_json_liste(
+        self,
+        basis_befehl: list[str],
+        *,
+        timeout: int,
+    ) -> tuple[list[dict[str, Any]], str]:
+        daten, fehler = self._fuehre_podman_kommando(
+            [*basis_befehl, "--format", "json"],
+            timeout=timeout,
+        )
         if daten:
             try:
                 geparst = json.loads(daten)
@@ -242,7 +259,10 @@ class ComposeWidget(QSplitter):
             except json.JSONDecodeError:
                 pass
 
-        daten, fehler = self._fuehre_podman_kommando([*basis_befehl, "--format", "{{json .}}"])
+        daten, fehler = self._fuehre_podman_kommando(
+            [*basis_befehl, "--format", "{{json .}}"],
+            timeout=timeout,
+        )
         if not daten:
             return [], fehler
 
@@ -585,6 +605,8 @@ class ComposeWidget(QSplitter):
             return "", "Podman wurde nicht gefunden. Installation und Runtime folgen im nächsten Schritt."
         except subprocess.TimeoutExpired:
             return "", "Die Podman-Abfrage hat das Zeitlimit überschritten."
+        except KeyboardInterrupt:
+            return "", "Die Podman-Abfrage wurde abgebrochen."
 
         stdout = ergebnis.stdout.strip()
         stderr = ergebnis.stderr.strip()

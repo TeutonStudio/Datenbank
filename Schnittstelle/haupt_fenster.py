@@ -87,4 +87,8 @@ class FensterLayout(QGridLayout):
     def wechsle_seite(self, index: int) -> None:
         if index not in self.index_liste(): return
         self.stackedWidget.setCurrentIndex(index)
+        aktuelle_seite = self.stackedWidget.currentWidget()
+        lade_wenn_noetig = getattr(aktuelle_seite, "lade_wenn_noetig", None)
+        if callable(lade_wenn_noetig):
+            lade_wenn_noetig()
         self.title_frame.setze_titel(self.navigationstitel[index])

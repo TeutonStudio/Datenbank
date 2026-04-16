@@ -55,4 +55,4 @@ class VerwaltungFenster(QWidget):
         self.aktualisierungs_timer.timeout.connect(self.compose.aktualisiere_inhalt)
         self.aktualisierungs_timer.start()
 
-        self.compose.aktualisiere_inhalt()
+        QTimer.singleShot(250, self.compose.aktualisiere_inhalt)

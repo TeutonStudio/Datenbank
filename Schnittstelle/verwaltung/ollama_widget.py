@@ -187,6 +187,8 @@ class OllamaWidget(QWidget):
             return "", "Podman wurde nicht gefunden."
         except subprocess.TimeoutExpired:
             return "", "Die Ollama-Abfrage hat das Zeitlimit überschritten."
+        except KeyboardInterrupt:
+            return "", "Die Ollama-Abfrage wurde abgebrochen."
 
         stdout = ergebnis.stdout.strip()
         stderr = ergebnis.stderr.strip()
