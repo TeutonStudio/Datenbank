@@ -83,7 +83,7 @@ QListWidget,
 /* Selected item styles for list items */
 #listWidget::item:selected,
 #listWidget_icon_only::item:selected {
-    background-color: #00aaff;
+    background-color: #006bb3;
 }
 
 /* Define icon dimensions for '#listWidget' items */

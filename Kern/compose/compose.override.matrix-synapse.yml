@@ -53,7 +53,7 @@ services:
 
         config = {
             "public_baseurl": os.environ["MATRIX_PUBLIC_BASEURL"].rstrip("/") + "/",
-            "enable_registration": False,
+            "enable_registration": True,
             "registration_shared_secret": os.environ["MATRIX_REGISTRATION_SHARED_SECRET"],
             "macaroon_secret_key": os.environ["MATRIX_MACAROON_SECRET_KEY"],
             "form_secret": os.environ["MATRIX_FORM_SECRET"],
