@@ -3,6 +3,7 @@
 ## Stand der Analyse
 
 Stand: 2026-04-16
+Grundlage: letzter Commit `62c7a14` (`Schnittstelle optimiert.`). Nicht committete Aenderungen in der Arbeitskopie wurden fuer diese Analyse bewusst nicht als Quelle verwendet.
 
 Die Anwendung ist ein lokaler Desktop-Verwalter fuer einen Podman-Compose-basierten Dienstestack. Der Fokus liegt aktuell auf drei Bereichen:
 
@@ -69,7 +70,7 @@ Der Code ist funktionsfaehig, aber noch nicht sauber geschichtet. Dienstmetadate
   - `VolumenBereich`
   - `AusgabeBereich`
 - `ContainerBereich` zeigt bekannte Dienste, Aktivierungsstatus, Containername und Status.
-- `VolumenBereich` zeigt `podman volume ls`.
+- `VolumenBereich` zeigt Projekt-Volumen aus `podman volume ls`, gefiltert ueber `com.docker.compose.project=n8nanwendung`.
 - `AusgabeBereich` zeigt Logs des aktuell ausgewaehlten Containers.
 - Start, Stop und Neustart werden ueber Dialoge mit laufender Podman-Ausgabe ausgefuehrt.
 - Die Klasse enthaelt noch viel Laufzeitlogik direkt im UI-Code:
@@ -89,7 +90,7 @@ Der Code ist funktionsfaehig, aber noch nicht sauber geschichtet. Dienstmetadate
   - verwaltet Checkbox-Auswahl
   - sendet Signale fuer Auswahl, Einstellungen, Aktualisierung und Start/Stop/Neustart
 - `Schnittstelle/verwaltung/compose/volumen_widget.py`
-  - zeigt Podman-Volumen
+  - zeigt die vom Compose-Projekt erzeugten Podman-Volumen
   - hat aktuell nur eine Aktualisieren-Aktion
   - hat keine fachliche Volumenauswahl fuer die Ausgabe
 - `Schnittstelle/verwaltung/compose/ausgabe_widget.py`
@@ -124,6 +125,7 @@ Der Code ist funktionsfaehig, aber noch nicht sauber geschichtet. Dienstmetadate
 - `baue_startkonfiguration(...)` validiert Pflichtvariablen und baut daraus die Startkonfiguration.
 - `podman_compose_argumente(...)` erzeugt die Argumentliste fuer `podman compose`.
 - `prozessumgebung_fuer_konfiguration(...)` erzeugt die Laufzeitumgebung.
+- `PROJEKT_NAME` ist auf `n8nanwendung` gesetzt und wird fuer Compose-Aufrufe sowie die Volumenfilterung genutzt.
 - `.compose.state.json` speichert:
   - letzte Startkonfiguration
   - ausgewaehlte Dienste
@@ -179,7 +181,7 @@ Hinweis: `compose.override.qdrant.yml` existiert, ist aber noch nicht als eigene
 - Ausgewaehlte Dienste werden persistiert.
 - Compose-Startkonfigurationen werden gebaut und gespeichert.
 - Podman-Containerstatus wird zyklisch geladen.
-- Podman-Volumen werden angezeigt.
+- Podman-Volumen werden projektbezogen angezeigt.
 - Containerlogs werden fuer den selektierten Container angezeigt.
 - Start, Stop und Neustart laufen ueber sichtbare Prozessdialoge.
 - `.env` und Entwurfsdatei werden zentral ueber `Umgebungsvariablen` verwaltet.

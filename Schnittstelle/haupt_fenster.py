@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import QGridLayout, QMainWindow, QStackedWidget, QStatusBar
 from Schnittstelle.horizontale_leiste import HorizontaleLeiste
 from Schnittstelle.vertikale_leiste import VertikaleLeiste
 from Schnittstelle.verwaltung.verwaltung_fenster import VerwaltungFenster
-from Schnittstelle.web_widget import ProgrammSeite
+from Schnittstelle.verwaltung.web_widget import ProgrammSeite
 
 PROGRAMM_NAME = "N8N Verwalter"
 PROGRAMM_SEITEN = [
